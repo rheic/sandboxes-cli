@@ -17,7 +17,7 @@ func TestParseNetworkRule(t *testing.T) {
 		{"10.0.0.0/8:443", sdk.NetworkRule{Protocol: "tcp", CIDR: "10.0.0.0/8", Port: 443}, true},
 		{"udp:10.0.0.0/8:53", sdk.NetworkRule{Protocol: "udp", CIDR: "10.0.0.0/8", Port: 53}, true},
 		{"0.0.0.0/0", sdk.NetworkRule{Protocol: "tcp", CIDR: "0.0.0.0/0"}, true},
-		{"2001:db8::/32", sdk.NetworkRule{}, false},
+		{"2001:db8::/32", sdk.NetworkRule{Protocol: "tcp", CIDR: "2001:db8::/32"}, true},
 		{"domain.example:443", sdk.NetworkRule{Protocol: "tcp", Domain: "domain.example", Port: 443}, true},
 		{"*.example.com:443", sdk.NetworkRule{Protocol: "tcp", Domain: "*.example.com", Port: 443}, true},
 		{"**", sdk.NetworkRule{Protocol: "tcp", CIDR: "0.0.0.0/0"}, true},
@@ -25,7 +25,8 @@ func TestParseNetworkRule(t *testing.T) {
 		{"192.0.2.10:443", sdk.NetworkRule{Protocol: "tcp", CIDR: "192.0.2.10/32", Port: 443}, true},
 		{"deny-ip.example:80", sdk.NetworkRule{Protocol: "tcp", Domain: "deny-ip.example", Port: 80}, true},
 		{"192.0.2.10/32", sdk.NetworkRule{Protocol: "tcp", CIDR: "192.0.2.10/32"}, true},
-		{"2001:db8::1", sdk.NetworkRule{}, false},
+		{"2001:db8::1", sdk.NetworkRule{Protocol: "tcp", CIDR: "2001:db8::1/128"}, true},
+		{"[2001:db8::1]:443", sdk.NetworkRule{Protocol: "tcp", CIDR: "2001:db8::1/128", Port: 443}, true},
 	} {
 		rule, err := parseNetworkRule(tc.value)
 		if (err == nil) != tc.ok || rule != tc.rule {

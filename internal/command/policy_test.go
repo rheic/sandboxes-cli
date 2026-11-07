@@ -42,12 +42,13 @@ func TestEvaluatePolicy(t *testing.T) {
 	}
 }
 
-func TestParsePolicyDestinationRejectsCIDR(t *testing.T) {
+func TestParsePolicyDestinationAcceptsSingleAddress(t *testing.T) {
 	if _, err := parsePolicyDestination("10.0.0.0/8"); err == nil {
 		t.Fatal("CIDR destination accepted")
 	}
-	if _, err := parsePolicyDestination("2001:db8::1"); err == nil {
-		t.Fatal("IPv6 destination accepted")
+	ip, err := parsePolicyDestination("2001:db8::1")
+	if err != nil || ip.To4() != nil {
+		t.Fatalf("IPv6 destination = %v, %v", ip, err)
 	}
 }
 

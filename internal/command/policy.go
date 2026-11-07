@@ -631,10 +631,10 @@ func (r *Runner) policyCheck(ctx context.Context, args []string) int {
 
 func parsePolicyDestination(value string) (net.IP, error) {
 	ip := net.ParseIP(value)
-	if ip == nil || ip.To4() == nil {
-		return nil, errors.New("destination must be a single IPv4 address")
+	if ip == nil {
+		return nil, errors.New("destination must be a single IP address")
 	}
-	return ip.To4(), nil
+	return ip, nil
 }
 
 func policyRules(sb *sdk.Sandbox) []policyRuleOutput {
