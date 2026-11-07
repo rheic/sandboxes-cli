@@ -30,6 +30,14 @@ func parseNetworkRule(value string) (sdk.NetworkRule, error) {
 	}
 	target := value
 	port := uint16(0)
+	// A bare IP literal has no port; IPv6 ports require brackets.
+	if ip := net.ParseIP(target); ip != nil {
+		bits := "128"
+		if ip.To4() != nil {
+			bits = "32"
+		}
+		return sdk.NetworkRule{Protocol: protocol, CIDR: ip.String() + "/" + bits, Port: 0}, nil
+	}
 	if index := strings.LastIndexByte(target, ':'); index > 0 {
 		parsed, err := strconv.ParseUint(target[index+1:], 10, 16)
 		if err == nil {
@@ -41,21 +49,20 @@ func parseNetworkRule(value string) (sdk.NetworkRule, error) {
 		}
 	}
 	if strings.HasPrefix(target, "[") && strings.HasSuffix(target, "]") {
-		return sdk.NetworkRule{}, errors.New("network rule CIDR must be IPv4")
+		target = strings.TrimSuffix(strings.TrimPrefix(target, "["), "]")
 	}
-	if ip, _, err := net.ParseCIDR(target); err == nil {
-		if ip.To4() == nil {
-			return sdk.NetworkRule{}, errors.New("network rule CIDR must be IPv4")
-		}
-		return sdk.NetworkRule{Protocol: protocol, CIDR: target, Port: port}, nil
+	if _, network, err := net.ParseCIDR(target); err == nil {
+		return sdk.NetworkRule{Protocol: protocol, CIDR: network.String(), Port: port}, nil
 	}
 	// A bare IP literal must become a /32 CIDR. Storing it as a domain rule
 	// would silently never match an IP flow (including a deny).
+
 	if ip := net.ParseIP(target); ip != nil {
-		if ip.To4() == nil {
-			return sdk.NetworkRule{}, errors.New("IPv6 network rules are not supported")
+		bits := "128"
+		if ip.To4() != nil {
+			bits = "32"
 		}
-		return sdk.NetworkRule{Protocol: protocol, CIDR: ip.String() + "/32", Port: port}, nil
+		return sdk.NetworkRule{Protocol: protocol, CIDR: ip.String() + "/" + bits, Port: port}, nil
 	}
 	if target == "**" {
 		return sdk.NetworkRule{Protocol: protocol, CIDR: "0.0.0.0/0", Port: port}, nil
