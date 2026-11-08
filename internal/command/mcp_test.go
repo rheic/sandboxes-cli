@@ -193,6 +193,27 @@ func TestMCPAddRejectsAmbiguousAndSecretRemote(t *testing.T) {
 	}
 }
 
+func TestMCPAddErrorDoesNotEchoMalformedHeaderValue(t *testing.T) {
+	const canary = "credential-canary-do-not-print"
+	original := requireMCPApprovalTerminal
+	requireMCPApprovalTerminal = func(io.Reader) error { return nil }
+	t.Cleanup(func() { requireMCPApprovalTerminal = original })
+	service := &fakeMCPService{}
+	for _, flag := range []string{"--header", "--secret-header"} {
+		t.Run(flag, func(t *testing.T) {
+			var out, stderr strings.Builder
+			runner := &Runner{Out: &out, Err: &stderr, NewClient: func(string) (sdk.Client, error) { return mcpFakeClient{mcp: service}, nil }}
+			args := []string{"mcp", "add", "fixture", "--url", "https://mcp.example.com/mcp", flag, canary}
+			if code := runner.Run(context.Background(), args); code != 2 {
+				t.Fatalf("add code=%d want 2, stderr=%q", code, stderr.String())
+			}
+			if strings.Contains(stderr.String(), canary) {
+				t.Fatalf("stderr leaked credential canary: %q", stderr.String())
+			}
+		})
+	}
+}
+
 func TestMCPAuthorizationHeaderRequiresVaultPlaceholder(t *testing.T) {
 	if _, err := parseMCPHeaders([]string{"Authorization: Bearer literal-secret"}); err == nil {
 		t.Fatal("accepted literal authorization material")
