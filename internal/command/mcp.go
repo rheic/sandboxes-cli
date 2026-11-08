@@ -225,7 +225,7 @@ func parseMCPHeaders(values []string) (map[string]string, error) {
 		name, headerValue, ok := strings.Cut(value, ":")
 		name = strings.TrimSpace(name)
 		if !ok || name == "" {
-			return nil, fmt.Errorf("invalid MCP header %q, want Name:Value", value)
+			return nil, errors.New("invalid MCP header, want Name:Value")
 		}
 		if strings.ContainsAny(name, "\r\n") || strings.ContainsAny(headerValue, "\r\n") {
 			return nil, errors.New("MCP headers must not contain control characters")

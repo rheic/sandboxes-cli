@@ -222,18 +222,24 @@ func TestMCPAuthorizationHeaderRequiresVaultPlaceholder(t *testing.T) {
 	}
 }
 
-func TestMCPSecretHeaderParseErrorRedactsInput(t *testing.T) {
+func TestMCPHeaderParseErrorsRedactInput(t *testing.T) {
 	const canary = "credential-canary-do-not-print"
 	for _, input := range []string{
 		canary,
 		"X-API-Key: " + canary + "\r\nInjected: value",
 	} {
-		_, err := parseMCPSecretHeaders([]string{input})
-		if err == nil {
-			t.Fatalf("accepted malformed header %q", input)
-		}
-		if strings.Contains(err.Error(), canary) {
-			t.Fatalf("parse error leaked credential canary: %q", err)
+		for name, parser := range map[string]func([]string) (map[string]string, error){
+			"static": parseMCPHeaders,
+			"secret": parseMCPSecretHeaders,
+		} {
+			_, err := parser([]string{input})
+			if err == nil {
+				t.Errorf("%s parser accepted malformed header", name)
+				continue
+			}
+			if strings.Contains(err.Error(), canary) {
+				t.Errorf("%s parse error leaked credential canary: %q", name, err)
+			}
 		}
 	}
 }
