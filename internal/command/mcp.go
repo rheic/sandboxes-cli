@@ -267,7 +267,7 @@ func parseMCPSecretHeaders(values []string) (map[string]string, error) {
 		name, headerValue, ok := strings.Cut(value, ":")
 		name = strings.TrimSpace(name)
 		if !ok || name == "" || strings.ContainsAny(name, "\r\n") || strings.ContainsAny(headerValue, "\r\n") {
-			return nil, fmt.Errorf("invalid secret MCP header %q, want Name:Value", value)
+			return nil, errors.New("invalid secret MCP header, want Name:Value")
 		}
 		headerValue = strings.TrimSpace(headerValue)
 		refs, err := mcpHeaderPlaceholderNames(headerValue)
