@@ -60,6 +60,10 @@ func findDiagnoseCheck(t *testing.T, report diagnoseReport, name string) diagnos
 }
 
 func TestDiagnoseSectionsMatchBaselineShape(t *testing.T) {
+	originalVirtualizationSupport := hostVirtualizationSupport
+	t.Cleanup(func() { hostVirtualizationSupport = originalVirtualizationSupport })
+	hostVirtualizationSupport = func() (bool, string) { return true, "test hypervisor present" }
+
 	socket := filepath.Join(t.TempDir(), "sandboxd.sock")
 	if err := os.WriteFile(socket, nil, 0o600); err != nil {
 		t.Fatal(err)
