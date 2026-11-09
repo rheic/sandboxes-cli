@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.0.43 — 2026-11-09
+
+- Reject all static remote MCP headers; require host-vault references for every remote header.
+- Update the sandboxes-go-sdk dependency to v0.0.22.
+
 ## v0.0.42 — 2026-11-08
 
 - Redact malformed MCP `--header` and `--secret-header` values from CLI errors.

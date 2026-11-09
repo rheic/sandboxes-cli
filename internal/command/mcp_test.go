@@ -164,10 +164,10 @@ func TestMCPAddRemoteSendsURLAndHeaders(t *testing.T) {
 	service := &fakeMCPService{}
 	var out, stderr strings.Builder
 	runner := &Runner{Out: &out, Err: &stderr, In: strings.NewReader("yes\n"), NewClient: func(string) (sdk.Client, error) { return mcpFakeClient{mcp: service}, nil }}
-	if code := runner.Run(context.Background(), []string{"mcp", "add", "remote-fixture", "--url", "https://mcp.example.com/mcp", "--header", "X-Team: docs", "--secret-header", "X-API-Key: ${api_key}"}); code != 0 {
+	if code := runner.Run(context.Background(), []string{"mcp", "add", "remote-fixture", "--url", "https://mcp.example.com/mcp", "--secret-header", "X-API-Key: ${api_key}"}); code != 0 {
 		t.Fatalf("add code=%d stderr=%q", code, stderr.String())
 	}
-	if service.registerConfig.Name != "remote-fixture" || service.registerConfig.URL != "https://mcp.example.com/mcp" || service.registerConfig.Headers["X-Team"] != "docs" || service.registerConfig.SecretHeaders["X-API-Key"] != "${api_key}" {
+	if service.registerConfig.Name != "remote-fixture" || service.registerConfig.URL != "https://mcp.example.com/mcp" || len(service.registerConfig.Headers) != 0 || service.registerConfig.SecretHeaders["X-API-Key"] != "${api_key}" {
 		t.Fatalf("register config=%+v", service.registerConfig)
 	}
 	if service.registerConfig.Command != "" {
@@ -185,11 +185,10 @@ func TestMCPAddRejectsAmbiguousAndSecretRemote(t *testing.T) {
 	if code := runner.Run(context.Background(), []string{"mcp", "add", "fixture", "--url", "https://mcp.example.com/mcp", "--command", "/bin/false"}); code != 2 {
 		t.Fatalf("ambiguous add code=%d want 2", code)
 	}
-	if code := runner.Run(context.Background(), []string{"mcp", "add", "fixture", "--url", "https://mcp.example.com/mcp", "--header", "Authorization: Bearer x"}); code != 2 || service.registerCalls != 0 {
-		t.Fatalf("secret header add code=%d register=%d", code, service.registerCalls)
-	}
-	if code := runner.Run(context.Background(), []string{"mcp", "add", "fixture", "--url", "https://mcp.example.com/mcp", "--header", "X-API-Key: literal"}); code != 2 || service.registerCalls != 0 {
-		t.Fatalf("literal API-key add code=%d register=%d", code, service.registerCalls)
+	for _, header := range []string{"Authorization: Bearer x", "X-API-Key: literal", "X-Session: credential"} {
+		if code := runner.Run(context.Background(), []string{"mcp", "add", "fixture", "--url", "https://mcp.example.com/mcp", "--header", header}); code != 2 || service.registerCalls != 0 {
+			t.Fatalf("static header add code=%d register=%d", code, service.registerCalls)
+		}
 	}
 }
 

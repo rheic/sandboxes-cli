@@ -134,12 +134,12 @@ func (r *Runner) mcpAdd(ctx context.Context, args []string) int {
 	directory := fs.String("dir", "", "working directory")
 	remoteURL := fs.String("url", "", "remote streamable-HTTPS MCP endpoint (mutually exclusive with --command)")
 	fs.Var(&serverArgs, "args", "comma-separated MCP executable arguments (repeatable)")
-	fs.Var(&headerArgs, "header", "static non-secret remote header as Name:Value")
+	fs.Var(&headerArgs, "header", "deprecated; static MCP headers are disabled")
 	fs.Var(&secretHeaderArgs, "secret-header", "host-vault remote header as Name:Value with ${placeholder}")
 	fs.Usage = func() {
 		_, _ = fmt.Fprintf(fs.Output(), "Usage: rsbx mcp add NAME %s EXECUTABLE [--args ARG] [--dir PATH]\n", commandFlag)
-		_, _ = fmt.Fprintln(fs.Output(), "       rsbx mcp add NAME --url https://HOST/mcp [--header Name:Value] [--secret-header Name:${PLACEHOLDER}]")
-		_, _ = fmt.Fprintln(fs.Output(), "Runs the registered stdio server on the host after daemon approval. Remote servers are limited to the daemon's allowed hosts. --header is for non-secret values; store credentials with rsbx secret set mcp:NAME:PLACEHOLDER and pass the reference with --secret-header.")
+		_, _ = fmt.Fprintln(fs.Output(), "       rsbx mcp add NAME --url https://HOST/mcp [--secret-header Name:${PLACEHOLDER}]")
+		_, _ = fmt.Fprintln(fs.Output(), "Runs the registered stdio server on the host after daemon approval. Remote servers are limited to the daemon's allowed hosts. Store values with rsbx secret set mcp:NAME:PLACEHOLDER and pass only host-vault references through --secret-header.")
 	}
 	if err := fs.Parse(reorderFlagArgs(args, map[string]bool{commandFlag: true, "--dir": true, mcpArgsFlagName: true, "--url": true, "--header": true, "--secret-header": true})); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -148,7 +148,7 @@ func (r *Runner) mcpAdd(ctx context.Context, args []string) int {
 		return r.flagParseFailure("mcp add", err)
 	}
 	if fs.NArg() != 1 || (*command == "" && *remoteURL == "") || (*command != "" && *remoteURL != "") {
-		_, _ = fmt.Fprintln(r.Err, "usage: rsbx mcp add NAME (--command EXECUTABLE [--args ARG] [--dir PATH] | --url https://HOST/mcp [--header Name:Value] [--secret-header Name:${PLACEHOLDER}])")
+		_, _ = fmt.Fprintln(r.Err, "usage: rsbx mcp add NAME (--command EXECUTABLE [--args ARG] [--dir PATH] | --url https://HOST/mcp [--secret-header Name:${PLACEHOLDER}])")
 		return 2
 	}
 	if *remoteURL == "" && (len(headerArgs)+len(secretHeaderArgs) > 0) {
@@ -219,46 +219,10 @@ func (r *Runner) mcpAddStdio(ctx context.Context, client sdk.Client, name, comma
 
 // parseMCPHeaders parses repeatable Name:Value flags into a header map.
 func parseMCPHeaders(values []string) (map[string]string, error) {
-	headers := make(map[string]string, len(values))
-	seen := make(map[string]struct{}, len(values))
-	for _, value := range values {
-		name, headerValue, ok := strings.Cut(value, ":")
-		name = strings.TrimSpace(name)
-		if !ok || name == "" {
-			return nil, errors.New("invalid MCP header, want Name:Value")
-		}
-		if strings.ContainsAny(name, "\r\n") || strings.ContainsAny(headerValue, "\r\n") {
-			return nil, errors.New("MCP headers must not contain control characters")
-		}
-		canonicalName := strings.ToLower(name)
-		if _, exists := seen[canonicalName]; exists {
-			return nil, errors.New("MCP header names must be unique, ignoring case")
-		}
-		seen[canonicalName] = struct{}{}
-		headerValue = strings.TrimSpace(headerValue)
-		refs, err := mcpHeaderPlaceholderNames(headerValue)
-		if err != nil {
-			return nil, err
-		}
-		if sensitiveMCPHeaderName(name) {
-			return nil, errors.New("credential-bearing MCP headers must use --secret-header")
-		}
-		if len(refs) > 0 || strings.Contains(headerValue, "}") {
-			return nil, errors.New("MCP header placeholders must use --secret-header")
-		}
-		headers[name] = headerValue
+	if len(values) != 0 {
+		return nil, errors.New("static MCP headers are disabled; use --secret-header with a host-vault reference")
 	}
-	return headers, nil
-}
-
-func sensitiveMCPHeaderName(name string) bool {
-	name = strings.ToLower(strings.TrimSpace(name))
-	for _, marker := range []string{"auth", "cookie", "token", "secret", "credential", "password", "-key", "_key", "apikey"} {
-		if strings.Contains(name, marker) {
-			return true
-		}
-	}
-	return strings.HasSuffix(name, "key")
+	return map[string]string{}, nil
 }
 
 func parseMCPSecretHeaders(values []string) (map[string]string, error) {

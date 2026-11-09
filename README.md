@@ -198,7 +198,7 @@ scripts to a supported host proxy route; the proxy keeps the real credential on
 the host and adds it only to requests sent to a fixed provider host.
 
 Remote MCP servers can be registered with `rsbx mcp add NAME --url
-https://HOST/mcp`. Use `--header Name:Value` only for non-secret values. Store
+https://HOST/mcp`. All remote headers must use `--secret-header`. Store
 credentials with `rsbx secret set mcp:NAME:PLACEHOLDER`, then pass them as
 `--secret-header 'X-API-Key: ${PLACEHOLDER}'`; the secret value stays in the
 host vault and is resolved by the daemon for each request. The daemon requires
