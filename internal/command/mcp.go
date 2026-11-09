@@ -230,7 +230,7 @@ func parseMCPSecretHeaders(values []string) (map[string]string, error) {
 	for _, value := range values {
 		name, headerValue, ok := strings.Cut(value, ":")
 		name = strings.TrimSpace(name)
-		if !ok || name == "" || strings.ContainsAny(name, "\r\n") || strings.ContainsAny(headerValue, "\r\n") {
+		if !ok || name == "" || strings.ContainsAny(name, "\r\n\x00") || strings.ContainsAny(headerValue, "\r\n\x00") {
 			return nil, errors.New("invalid secret MCP header, want Name:Value")
 		}
 		headerValue = strings.TrimSpace(headerValue)

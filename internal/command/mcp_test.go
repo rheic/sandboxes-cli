@@ -247,6 +247,8 @@ func TestMCPHeaderParseErrorsRedactInput(t *testing.T) {
 	for _, input := range []string{
 		canary,
 		"X-API-Key: " + canary + "\r\nInjected: value",
+		"X-API-Key\x00: ${token}",
+		"X-API-Key: ${token\x00}",
 	} {
 		for name, parser := range map[string]func([]string) (map[string]string, error){
 			"static": parseMCPHeaders,

@@ -4,6 +4,7 @@
 
 - Reject all static remote MCP headers; require host-vault references for every remote header.
 - Update the sandboxes-go-sdk dependency to v0.0.22.
+- Reject NUL bytes in vault-backed MCP header names and values.
 
 ## v0.0.42 — 2026-11-08
 
