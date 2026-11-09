@@ -68,7 +68,7 @@ func TestDrawDashboardShowsRHEICBrandAndSandbox(t *testing.T) {
 	})
 
 	output := screen.text()
-	for _, want := range []string{"RHEIC", "LOCAL SANDBOXES", "SANDBOXES", "brand-check", "running", "↑/↓ or j/k", "◉"} {
+	for _, want := range []string{"RHEIC", "LOCAL SANDBOXES", "SANDBOXES", "brand-check", "running", "↑/↓ or j/k", "█"} {
 		if !strings.Contains(output, want) {
 			t.Errorf("dashboard does not contain %q", want)
 		}

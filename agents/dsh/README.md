@@ -1,5 +1,7 @@
 # DeepSeek Harness preview image
 
+<img src="../../docs/assets/rheic-shark.png" alt="Rheic shark logo" width="180">
+
 Pinned recipe for `ghcr.io/rheic/sandbox-dsh-preview`. The package
 `@deepseek-ai/dsh` is MIT-licensed; see the upstream package for its complete
 dependency notices. The image is anonymous and contains no API keys.
