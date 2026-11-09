@@ -10,3 +10,4 @@
 - Add `rsbx mcp add --secret-header` so MCP credentials cross RPC only as vault placeholders.
 - Add the blue shark symbol mark to the TUI dashboard.
 - Update the direct `tcell` dependency to v3.6.0.
+- Update the selected `golang.org/x/sys` version from v0.49.0 to v0.50.0.
