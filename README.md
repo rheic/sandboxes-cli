@@ -26,7 +26,8 @@ available), ad-hoc signs it on macOS, removes the quarantine attribute so
 Gatekeeper does not prompt, and installs to `~/.local/bin` (override with
 `RSBX_INSTALL_DIR`). Pin a version with `--version vX.Y.Z`; `--file PATH`
 installs a local asset for offline/air-gapped use. Verification can only be
-disabled explicitly with `RSBX_NO_VERIFY=1` for offline testing.
+disabled explicitly with `RSBX_NO_VERIFY=1` only when installing a local
+`--file` for offline testing; it cannot disable checks for downloaded releases.
 
 ## Migrating from `qsbx`
 

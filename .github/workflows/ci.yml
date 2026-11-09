@@ -123,6 +123,18 @@ jobs:
           scripts/test-release-notes.sh
           scripts/test-release-candidate.sh
 
+  shell-contracts:
+    name: Shell Script Contracts
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Check shell syntax and release/install controls
+        run: |
+          for script in scripts/*.sh; do bash -n "$script"; done
+          scripts/test-install.sh
+          scripts/test-release-notes.sh
+          scripts/test-release-candidate.sh
+
   lint:
     name: Lint
     runs-on: ubuntu-24.04
