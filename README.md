@@ -110,9 +110,9 @@ rsbx kit inspect examples/kits/codex-go.yaml
 rsbx run --kit examples/kits/codex-go.yaml
 ```
 
-The `rsbx tui` dashboard draws the Rheic ember mark directly in the terminal,
-with the organization name, brand colors, and sandbox status. The scalable SVG
-mark is in `assets/rheic-mark.svg`.
+The `rsbx tui` dashboard draws the supplied blue shark logo directly in the
+terminal using block characters, alongside the Rheic name, brand colors, and
+sandbox status. The README logo image is `docs/assets/rheic-shark.png`.
 
 `rsbx create` mirrors the Docker grammar `create AGENT [PATH...]` with optional
 `--name NAME`; a missing PATH creates a mountless sandbox, and PATHs accept the
