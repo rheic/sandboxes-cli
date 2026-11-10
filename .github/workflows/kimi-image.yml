@@ -8,7 +8,23 @@ permissions:
   attestations: write
   artifact-metadata: write
 jobs:
+  m7_gate:
+    runs-on: ubuntu-24.04
+    environment: m7-external-security-review
+    permissions: {}
+    env:
+      M7_EXTERNAL_SECURITY_REVIEW_APPROVED_COMMIT: ${{ vars.M7_EXTERNAL_SECURITY_REVIEW_APPROVED_COMMIT }}
+    steps:
+      - name: Require explicit M7 security review approval
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$M7_EXTERNAL_SECURITY_REVIEW_APPROVED_COMMIT" =~ ^[0-9a-f]{40}$ || "$M7_EXTERNAL_SECURITY_REVIEW_APPROVED_COMMIT" != "$GITHUB_SHA" ]]; then
+            echo "Publication blocked: M7 approval must name this exact reviewed commit in the protected environment." >&2
+            exit 1
+          fi
   build:
+    needs: m7_gate
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

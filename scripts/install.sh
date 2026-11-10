@@ -4,7 +4,7 @@
 # The binary is checked against SHA256SUMS, its SLSA provenance is verified
 # when the GitHub CLI is available, it is ad-hoc signed on macOS and the
 # quarantine attribute is removed, so Gatekeeper does not prompt for a
-# Terminal-launched CLI. Set RSBX_NO_VERIFY=1 only for offline testing.
+# Terminal-launched CLI. Set RSBX_NO_VERIFY=1 with --file only for offline testing.
 set -euo pipefail
 
 repo="rheic/sandboxes-cli"
@@ -26,6 +26,16 @@ while [ $# -gt 0 ]; do
     *) usage ;;
   esac
 done
+
+no_verify="${RSBX_NO_VERIFY:-0}"
+case "$no_verify" in
+  0|1) ;;
+  *) echo "RSBX_NO_VERIFY must be 0 or 1" >&2; exit 2 ;;
+esac
+if [ "$no_verify" = "1" ] && [ -z "$file" ]; then
+  echo "RSBX_NO_VERIFY=1 requires --file for offline testing" >&2
+  exit 2
+fi
 
 os="$(uname -s)"
 case "$os" in
@@ -53,6 +63,10 @@ if [ -z "$file" ]; then
     fi
   fi
   [ -n "$version" ] || { echo "could not determine release version" >&2; exit 1; }
+  if [[ ! "$version" =~ ^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+    echo "invalid release version: use stable major.minor.patch" >&2
+    exit 2
+  fi
   echo "downloading ${asset} from ${repo} ${version}"
   if command -v gh >/dev/null 2>&1; then
     gh release download "$version" --repo "$repo" --pattern "$asset" --pattern SHA256SUMS --dir "$tmp"
@@ -67,7 +81,7 @@ else
   file="$tmp/$asset"
 fi
 
-if [ "${RSBX_NO_VERIFY:-0}" != "1" ]; then
+if [ "$no_verify" != "1" ]; then
   if [ -f "$tmp/SHA256SUMS" ]; then
     expected="$(awk -v name="$(basename "$asset")" '$2 == name {print $1}' "$tmp/SHA256SUMS")"
     [ -n "$expected" ] || { echo "asset is missing from SHA256SUMS" >&2; exit 1; }
@@ -86,8 +100,18 @@ fi
 
 chmod 0755 "$file"
 if [ "$goos" = "darwin" ]; then
-  codesign --force --sign - "$file" >/dev/null 2>&1 || true
-  xattr -dr com.apple.quarantine "$file" 2>/dev/null || true
+  if ! codesign --force --sign - "$file" >/dev/null 2>&1; then
+    echo "could not ad-hoc sign the installed binary" >&2
+    exit 1
+  fi
+  if ! codesign --verify --strict "$file" >/dev/null 2>&1; then
+    echo "could not verify the ad-hoc signature" >&2
+    exit 1
+  fi
+  if ! xattr -dr com.apple.quarantine "$file" 2>/dev/null; then
+    echo "could not remove the macOS quarantine attribute" >&2
+    exit 1
+  fi
 fi
 mkdir -p "$dir"
 install -m 0755 "$file" "$dir/rsbx"
