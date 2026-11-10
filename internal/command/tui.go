@@ -29,7 +29,7 @@ Keys:
 
 const (
 	dashboardMinWidth   = 64
-	dashboardMinHeight  = 16
+	dashboardMinHeight  = 20
 	dashboardPageSize   = 100
 	dashboardStateLabel = "STATE"
 	sandboxStateRunning = "running"
@@ -37,12 +37,12 @@ const (
 )
 
 var (
-	brandBackground = tcell.NewRGBColor(20, 8, 24)
-	brandPrimary    = tcell.NewRGBColor(112, 37, 161)  // #7025A1
-	brandAccent     = tcell.NewRGBColor(235, 57, 139)  // #EB398B
+	brandBackground = tcell.NewRGBColor(8, 13, 32)
+	brandPrimary    = tcell.NewRGBColor(38, 82, 245)   // #2652F5
+	brandAccent     = tcell.NewRGBColor(72, 122, 255)  // #487AFF
 	brandWarm       = tcell.NewRGBColor(255, 111, 53)  // #FF6F35
-	brandLavender   = tcell.NewRGBColor(244, 230, 255) // #F4E6FF
-	brandMuted      = tcell.NewRGBColor(176, 158, 184)
+	brandLavender   = tcell.NewRGBColor(235, 241, 255) // #EBF1FF
+	brandMuted      = tcell.NewRGBColor(156, 174, 219)
 )
 
 type dashboardScreen interface {
@@ -305,26 +305,26 @@ func drawDashboard(screen dashboardScreen, model *dashboardModel) {
 	screen.Clear()
 	if width < dashboardMinWidth || height < dashboardMinHeight {
 		drawText(screen, 2, 1, "RHEIC", accent, width-4)
-		drawText(screen, 2, 3, "Resize terminal to at least 64 x 16", muted, width-4)
+		drawText(screen, 2, 3, "Resize terminal to at least 64 x 20", muted, width-4)
 		screen.Show()
 		return
 	}
 
 	drawBrand(screen, primary, accent, width)
-	drawText(screen, 2, 6, strings.Repeat("─", width-4), tcell.StyleDefault.Foreground(brandPrimary).Background(brandBackground), width-4)
+	drawText(screen, 2, 9, strings.Repeat("─", width-4), tcell.StyleDefault.Foreground(brandPrimary).Background(brandBackground), width-4)
 
 	leftWidth := width * 3 / 5
 	if leftWidth < 42 {
 		leftWidth = 42
 	}
 	detailX := leftWidth + 3
-	drawText(screen, 3, 8, "SANDBOXES", muted, leftWidth-4)
-	drawText(screen, 3, 9, "NAME", accent, 22)
-	drawText(screen, 27, 9, dashboardStateLabel, accent, 12)
-	drawText(screen, 40, 9, "AGENT", accent, leftWidth-43)
-	for y := 10; y < height-3; y++ {
+	drawText(screen, 3, 11, "SANDBOXES", muted, leftWidth-4)
+	drawText(screen, 3, 12, "NAME", accent, 22)
+	drawText(screen, 27, 12, dashboardStateLabel, accent, 12)
+	drawText(screen, 40, 12, "AGENT", accent, leftWidth-43)
+	for y := 13; y < height-3; y++ {
 		drawText(screen, 3, y, strings.Repeat(" ", leftWidth-4), primary, leftWidth-4)
-		index := y - 10
+		index := y - 13
 		if index >= len(model.items) {
 			continue
 		}
@@ -342,12 +342,12 @@ func drawDashboard(screen dashboardScreen, model *dashboardModel) {
 	}
 
 	if detailX < width-22 {
-		drawText(screen, detailX, 8, "SELECTED SANDBOX", muted, width-detailX-2)
+		drawText(screen, detailX, 11, "SELECTED SANDBOX", muted, width-detailX-2)
 		if len(model.items) > 0 {
 			drawDashboardDetails(screen, &model.items[model.selected], detailX, width, height, primary, accent, muted, warm)
 		} else if model.err == "" {
-			drawText(screen, detailX, 10, "No sandboxes yet", primary, width-detailX-2)
-			drawText(screen, detailX, 12, "Start one with rsbx run", muted, width-detailX-2)
+			drawText(screen, detailX, 13, "No sandboxes yet", primary, width-detailX-2)
+			drawText(screen, detailX, 15, "Start one with rsbx run", muted, width-detailX-2)
 		}
 	}
 	drawDashboardFooter(screen, model, width, height, accent, muted, warm)
@@ -409,23 +409,43 @@ func drawCreateForm(screen dashboardScreen, form createFormModel, width, height 
 }
 
 func drawBrand(screen dashboardScreen, primary, accent tcell.Style, width int) {
-	mark := []string{
-		"      ╭─────╮",
-		"   ╭──╯     ╰──╮",
-		"  ╱    ╭╮      ╲",
-		" │    ╱◉ ╲      │",
-		"  ╲   ╲  ╱     ╱",
-		"   ╰───╲╱─────╯",
+	logoStyle := tcell.StyleDefault.Foreground(brandPrimary).Background(brandBackground)
+	mask := []string{
+		"                         #####  ",
+		"                     #######    ",
+		"                   ########     ",
+		"                 #########      ",
+		"          ################      ",
+		"     ########################   ",
+		"  ####### ####################  ",
+		" ################### ## # ##### ",
+		"   ##            ##############  ",
+		"      ##            ############",
+		"                     #  #######  ",
+		"                         ######  ",
+		"           ####         ######   ",
+		"            #######   ######     ",
+		"              ###########        ",
+		"              ####               ",
 	}
-	for y, row := range mark {
-		style := primary
-		if y == 0 || strings.ContainsRune(row, '◉') || y == len(mark)-1 {
-			style = accent
+	for y := 0; y < len(mask); y += 2 {
+		for x := 0; x < len(mask[y]); x++ {
+			top := mask[y][x] == '#'
+			bottom := y+1 < len(mask) && x < len(mask[y+1]) && mask[y+1][x] == '#'
+			glyph := ' '
+			switch {
+			case top && bottom:
+				glyph = '█'
+			case top:
+				glyph = '▀'
+			case bottom:
+				glyph = '▄'
+			}
+			screen.PutStrStyled(2+x, y/2, string(glyph), logoStyle)
 		}
-		drawText(screen, 3, y, row, style, 18)
 	}
-	drawText(screen, 24, 1, "RHEIC", primary.Bold(true), width-26)
-	drawText(screen, 24, 3, "LOCAL SANDBOXES  ·  EMBER", tcell.StyleDefault.Foreground(brandWarm).Background(brandBackground), width-26)
+	drawText(screen, 38, 1, "RHEIC", primary.Bold(true), width-40)
+	drawText(screen, 38, 3, "LOCAL SANDBOXES", accent, width-40)
 }
 
 func drawDashboardDetails(screen dashboardScreen, item *sdk.Sandbox, x, width, height int, primary, accent, muted, warm tcell.Style) {
@@ -439,7 +459,7 @@ func drawDashboardDetails(screen dashboardScreen, item *sdk.Sandbox, x, width, h
 		{"WORKSPACE", item.Workspace},
 	}
 	for i, row := range rows {
-		y := 10 + i*2
+		y := 13 + i*2
 		if y >= height-5 {
 			break
 		}

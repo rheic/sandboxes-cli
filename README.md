@@ -1,5 +1,7 @@
 # sandboxes-cli
 
+<img src="docs/assets/rheic-shark.png" alt="Rheic shark logo" width="180">
+
 Status: pre-alpha.
 
 ## Import path migration

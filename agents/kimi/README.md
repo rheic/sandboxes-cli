@@ -1,5 +1,7 @@
 # Kimi agent image
 
+<img src="../../docs/assets/rheic-shark.png" alt="Rheic shark logo" width="180">
+
 Build:
 
 ```sh
