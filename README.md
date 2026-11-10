@@ -198,11 +198,13 @@ scripts to a supported host proxy route; the proxy keeps the real credential on
 the host and adds it only to requests sent to a fixed provider host.
 
 Remote MCP servers can be registered with `rsbx mcp add NAME --url
-https://HOST/mcp`. All remote headers must use `--secret-header`. Store
-credentials with `rsbx secret set mcp:NAME:PLACEHOLDER`, then pass them as
-`--secret-header 'X-API-Key: ${PLACEHOLDER}'`; the secret value stays in the
-host vault and is resolved by the daemon for each request. The daemon requires
-the exact host to be in `mcp.remote.allowedHosts`.
+https://HOST/mcp`. All remote headers must use host-vault references. Use
+`--secret-header 'X-API-Key: ${PLACEHOLDER}'`, or Docker-compatible `--header`
+with the same placeholder syntax. Both flags reject literal values; header
+templates are sent through the vault-backed API field and resolved by the
+daemon for each request. Store values with
+`rsbx secret set mcp:NAME:PLACEHOLDER`. The daemon requires the exact host to be
+in `mcp.remote.allowedHosts`.
 
 `rsbx cp` copies regular files and directory trees in either direction; exactly
 one side is `SANDBOX:PATH` with an absolute guest path. A guest destination

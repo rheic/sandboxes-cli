@@ -175,6 +175,22 @@ func TestMCPAddRemoteSendsURLAndHeaders(t *testing.T) {
 	}
 }
 
+func TestMCPAddDockerHeaderAliasUsesVaultField(t *testing.T) {
+	original := requireMCPApprovalTerminal
+	requireMCPApprovalTerminal = func(io.Reader) error { return nil }
+	t.Cleanup(func() { requireMCPApprovalTerminal = original })
+	service := &fakeMCPService{}
+	var out, stderr strings.Builder
+	runner := &Runner{Out: &out, Err: &stderr, In: strings.NewReader("yes\n"), NewClient: func(string) (sdk.Client, error) { return mcpFakeClient{mcp: service}, nil }}
+	args := []string{"mcp", "add", "remote-fixture", "--url", "https://mcp.example.com/mcp", "--header", "Authorization: Bearer ${api_key}", "--header", "Accept: ${accept}"}
+	if code := runner.Run(context.Background(), args); code != 0 {
+		t.Fatalf("add code=%d stderr=%q", code, stderr.String())
+	}
+	if len(service.registerConfig.Headers) != 0 || service.registerConfig.SecretHeaders["Authorization"] != "Bearer ${api_key}" || service.registerConfig.SecretHeaders["Accept"] != "${accept}" {
+		t.Fatalf("register config=%+v", service.registerConfig)
+	}
+}
+
 func TestMCPAddRejectsAmbiguousAndSecretRemote(t *testing.T) {
 	original := requireMCPApprovalTerminal
 	requireMCPApprovalTerminal = func(io.Reader) error { return nil }
@@ -189,6 +205,9 @@ func TestMCPAddRejectsAmbiguousAndSecretRemote(t *testing.T) {
 		if code := runner.Run(context.Background(), []string{"mcp", "add", "fixture", "--url", "https://mcp.example.com/mcp", "--header", header}); code != 2 || service.registerCalls != 0 {
 			t.Fatalf("static header add code=%d register=%d", code, service.registerCalls)
 		}
+	}
+	if code := runner.Run(context.Background(), []string{"mcp", "add", "fixture", "--url", "https://mcp.example.com/mcp", "--header", "Accept: ${accept}", "--secret-header", "accept: ${other}"}); code != 2 || service.registerCalls != 0 {
+		t.Fatalf("duplicate alias header add code=%d register=%d", code, service.registerCalls)
 	}
 }
 
@@ -214,11 +233,12 @@ func TestMCPAddErrorDoesNotEchoMalformedHeaderValue(t *testing.T) {
 }
 
 func TestMCPAuthorizationHeaderRequiresVaultPlaceholder(t *testing.T) {
-	if _, err := parseMCPHeaders([]string{"Authorization: Bearer literal-secret"}); err == nil {
+	if _, _, err := parseMCPRemoteHeaders([]string{"Authorization: Bearer literal-secret"}, nil); err == nil {
 		t.Fatal("accepted literal authorization material")
 	}
-	if _, err := parseMCPHeaders([]string{"Authorization: Bearer ${token}"}); err == nil {
-		t.Fatal("accepted Authorization in the static header field")
+	staticHeaders, aliasHeaders, err := parseMCPRemoteHeaders([]string{"Authorization: Bearer ${token}"}, nil)
+	if err != nil || len(staticHeaders) != 0 || aliasHeaders["Authorization"] != "Bearer ${token}" {
+		t.Fatalf("Docker-compatible header alias=%v static=%v err=%v", aliasHeaders, staticHeaders, err)
 	}
 	headers, err := parseMCPSecretHeaders([]string{"Authorization: Bearer ${token}"})
 	if err != nil || headers["Authorization"] != "Bearer ${token}" {
@@ -227,8 +247,8 @@ func TestMCPAuthorizationHeaderRequiresVaultPlaceholder(t *testing.T) {
 	if _, err := parseMCPSecretHeaders([]string{"X-API-Key: literal-secret"}); err == nil {
 		t.Fatal("accepted literal secret header value")
 	}
-	if _, err := parseMCPHeaders([]string{"X-Team: ${token}"}); err == nil {
-		t.Fatal("accepted vault placeholder in static headers")
+	if _, _, err := parseMCPRemoteHeaders([]string{"Accept: application/json"}, nil); err == nil {
+		t.Fatal("accepted a literal custom header value")
 	}
 	for _, service := range []string{"mcp:fixture:token", "mcp:Fixture.server:api_token"} {
 		if !validServiceSecret(service) {
@@ -251,7 +271,10 @@ func TestMCPHeaderParseErrorsRedactInput(t *testing.T) {
 		"X-API-Key: ${token\x00}",
 	} {
 		for name, parser := range map[string]func([]string) (map[string]string, error){
-			"static": parseMCPHeaders,
+			"header alias": func(values []string) (map[string]string, error) {
+				_, headers, err := parseMCPRemoteHeaders(values, nil)
+				return headers, err
+			},
 			"secret": parseMCPSecretHeaders,
 		} {
 			_, err := parser([]string{input})

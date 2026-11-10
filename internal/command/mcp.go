@@ -134,12 +134,12 @@ func (r *Runner) mcpAdd(ctx context.Context, args []string) int {
 	directory := fs.String("dir", "", "working directory")
 	remoteURL := fs.String("url", "", "remote streamable-HTTPS MCP endpoint (mutually exclusive with --command)")
 	fs.Var(&serverArgs, "args", "comma-separated MCP executable arguments (repeatable)")
-	fs.Var(&headerArgs, "header", "deprecated; static MCP headers are disabled")
+	fs.Var(&headerArgs, "header", "Docker-compatible alias for a host-vault remote header; values must contain ${placeholder}")
 	fs.Var(&secretHeaderArgs, "secret-header", "host-vault remote header as Name:Value with ${placeholder}")
 	fs.Usage = func() {
 		_, _ = fmt.Fprintf(fs.Output(), "Usage: rsbx mcp add NAME %s EXECUTABLE [--args ARG] [--dir PATH]\n", commandFlag)
-		_, _ = fmt.Fprintln(fs.Output(), "       rsbx mcp add NAME --url https://HOST/mcp [--secret-header Name:${PLACEHOLDER}]")
-		_, _ = fmt.Fprintln(fs.Output(), "Runs the registered stdio server on the host after daemon approval. Remote servers are limited to the daemon's allowed hosts. Store values with rsbx secret set mcp:NAME:PLACEHOLDER and pass only host-vault references through --secret-header.")
+		_, _ = fmt.Fprintln(fs.Output(), "       rsbx mcp add NAME --url https://HOST/mcp [--header|--secret-header 'Name: value with ${PLACEHOLDER}']")
+		_, _ = fmt.Fprintln(fs.Output(), "Both remote header flags accept host-vault references only; literal values are rejected. Store values with rsbx secret set mcp:NAME:PLACEHOLDER. Remote servers are limited to the daemon's allowed hosts.")
 	}
 	if err := fs.Parse(reorderFlagArgs(args, map[string]bool{commandFlag: true, "--dir": true, mcpArgsFlagName: true, "--url": true, "--header": true, "--secret-header": true})); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -148,7 +148,7 @@ func (r *Runner) mcpAdd(ctx context.Context, args []string) int {
 		return r.flagParseFailure("mcp add", err)
 	}
 	if fs.NArg() != 1 || (*command == "" && *remoteURL == "") || (*command != "" && *remoteURL != "") {
-		_, _ = fmt.Fprintln(r.Err, "usage: rsbx mcp add NAME (--command EXECUTABLE [--args ARG] [--dir PATH] | --url https://HOST/mcp [--secret-header Name:${PLACEHOLDER}])")
+		_, _ = fmt.Fprintln(r.Err, "usage: rsbx mcp add NAME (--command EXECUTABLE [--args ARG] [--dir PATH] | --url https://HOST/mcp [--header|--secret-header 'Name: value with ${PLACEHOLDER}'])")
 		return 2
 	}
 	if *remoteURL == "" && (len(headerArgs)+len(secretHeaderArgs) > 0) {
@@ -172,18 +172,9 @@ func (r *Runner) mcpAdd(ctx context.Context, args []string) int {
 }
 
 func (r *Runner) mcpAddRemote(ctx context.Context, client sdk.Client, name, rawURL string, headerArgs, secretHeaderArgs []string) int {
-	headers, err := parseMCPHeaders(headerArgs)
+	headers, secretHeaders, err := parseMCPRemoteHeaders(headerArgs, secretHeaderArgs)
 	if err != nil {
 		r.error(err)
-		return 2
-	}
-	secretHeaders, err := parseMCPSecretHeaders(secretHeaderArgs)
-	if err != nil {
-		r.error(err)
-		return 2
-	}
-	if mcpHeaderSetsOverlap(headers, secretHeaders) {
-		r.error(errors.New("MCP header names must be unique, ignoring case"))
 		return 2
 	}
 	if err := r.registerMCPRemoteServer(ctx, client, name, rawURL, headers, secretHeaders); err != nil {
@@ -217,12 +208,24 @@ func (r *Runner) mcpAddStdio(ctx context.Context, client sdk.Client, name, comma
 	return 0
 }
 
-// parseMCPHeaders parses repeatable Name:Value flags into a header map.
-func parseMCPHeaders(values []string) (map[string]string, error) {
-	if len(values) != 0 {
-		return nil, errors.New("static MCP headers are disabled; use --secret-header with a host-vault reference")
+// parseMCPRemoteHeaders treats Docker's --header syntax as an alias for
+// --secret-header. Every remote value still has to use a host-vault reference.
+func parseMCPRemoteHeaders(headerArgs, secretHeaderArgs []string) (map[string]string, map[string]string, error) {
+	aliasHeaders, err := parseMCPSecretHeaders(headerArgs)
+	if err != nil {
+		return nil, nil, err
 	}
-	return map[string]string{}, nil
+	secretHeaders, err := parseMCPSecretHeaders(secretHeaderArgs)
+	if err != nil {
+		return nil, nil, err
+	}
+	if mcpHeaderSetsOverlap(aliasHeaders, secretHeaders) {
+		return nil, nil, errors.New("MCP header names must be unique, ignoring case")
+	}
+	for name, value := range aliasHeaders {
+		secretHeaders[name] = value
+	}
+	return map[string]string{}, secretHeaders, nil
 }
 
 func parseMCPSecretHeaders(values []string) (map[string]string, error) {

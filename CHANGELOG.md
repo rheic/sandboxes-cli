@@ -3,6 +3,7 @@
 ## v0.0.43 — 2026-11-09
 
 - Reject all static remote MCP headers; require host-vault references for every remote header.
+- Accept Docker-compatible `--header` syntax for vault placeholders while continuing to reject literal remote header values.
 - Update the sandboxes-go-sdk dependency to v0.0.22.
 - Reject NUL bytes in vault-backed MCP header names and values.
 
