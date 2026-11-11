@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.0.43 — 2026-11-09
+## v0.0.43 — 2026-11-11
 
 - Reject all static remote MCP headers; require host-vault references for every remote header.
 - Accept Docker-compatible `--header` syntax for vault placeholders while continuing to reject literal remote header values.
