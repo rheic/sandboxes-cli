@@ -92,7 +92,7 @@ jobs:
       - name: Generate SBOM
         run: cyclonedx-gomod mod -json -licenses -type library -output dist/rsbx.cdx.json .
       - name: Generate checksums
-        run: (cd dist && sha256sum * > SHA256SUMS)
+        run: (cd dist && sha256sum -- * > SHA256SUMS)
       - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
           subject-path: dist/rsbx-darwin-arm64,dist/rsbx-darwin-amd64,dist/rsbx-linux-arm64,dist/rsbx-linux-amd64
