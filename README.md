@@ -2,6 +2,7 @@
 
 <img src="docs/assets/rheic-shark.png" alt="Rheic shark logo" width="180">
 
+
 Status: pre-alpha.
 
 ## Import path migration
@@ -25,7 +26,8 @@ available), ad-hoc signs it on macOS, removes the quarantine attribute so
 Gatekeeper does not prompt, and installs to `~/.local/bin` (override with
 `RSBX_INSTALL_DIR`). Pin a version with `--version vX.Y.Z`; `--file PATH`
 installs a local asset for offline/air-gapped use. Verification can only be
-disabled explicitly with `RSBX_NO_VERIFY=1` for offline testing.
+disabled explicitly with `RSBX_NO_VERIFY=1` only when installing a local
+`--file` for offline testing; it cannot disable checks for downloaded releases.
 
 ## Migrating from `qsbx`
 
@@ -108,9 +110,9 @@ rsbx kit inspect examples/kits/codex-go.yaml
 rsbx run --kit examples/kits/codex-go.yaml
 ```
 
-The `rsbx tui` dashboard draws the Rheic ember mark directly in the terminal,
-with the organization name, brand colors, and sandbox status. The scalable SVG
-mark is in `assets/rheic-mark.svg`.
+The `rsbx tui` dashboard draws the supplied blue shark logo directly in the
+terminal using block characters, alongside the Rheic name, brand colors, and
+sandbox status. The README logo image is `docs/assets/rheic-shark.png`.
 
 `rsbx create` mirrors the Docker grammar `create AGENT [PATH...]` with optional
 `--name NAME`; a missing PATH creates a mountless sandbox, and PATHs accept the
@@ -194,6 +196,15 @@ not written to SQLite, logs or argv. `${secret:service}` environment references
 are rejected because guest processes can read environment values. Migrate
 scripts to a supported host proxy route; the proxy keeps the real credential on
 the host and adds it only to requests sent to a fixed provider host.
+
+Remote MCP servers can be registered with `rsbx mcp add NAME --url
+https://HOST/mcp`. All remote headers must use host-vault references. Use
+`--secret-header 'X-API-Key: ${PLACEHOLDER}'`, or Docker-compatible `--header`
+with the same placeholder syntax. Both flags reject literal values; header
+templates are sent through the vault-backed API field and resolved by the
+daemon for each request. Store values with
+`rsbx secret set mcp:NAME:PLACEHOLDER`. The daemon requires the exact host to be
+in `mcp.remote.allowedHosts`.
 
 `rsbx cp` copies regular files and directory trees in either direction; exactly
 one side is `SANDBOX:PATH` with an absolute guest path. A guest destination

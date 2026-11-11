@@ -2,7 +2,7 @@
 package version
 
 // Version is the current build version.
-var Version = "0.0.41"
+var Version = "0.0.43"
 
 // Commit is the source revision of the build, injected via -ldflags.
 var Commit string

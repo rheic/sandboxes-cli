@@ -156,7 +156,7 @@ func checkHostProcesses() diagnoseCheck {
 
 func checkVirtualization() diagnoseCheck {
 	check := diagnoseCheck{Name: "Virtualization"}
-	supported, detail := virtualizationSupport()
+	supported, detail := hostVirtualizationSupport()
 	switch {
 	case supported:
 		check.Status = diagnosePass
@@ -168,6 +168,8 @@ func checkVirtualization() diagnoseCheck {
 	check.Detail = detail
 	return check
 }
+
+var hostVirtualizationSupport = virtualizationSupport
 
 func checkFilesystemTool(name string) diagnoseCheck {
 	check := diagnoseCheck{Name: name}

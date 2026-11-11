@@ -57,5 +57,4 @@ git -C "$tmp/checkout" remote set-url origin "$tmp/origin.git"
 git -C "$tmp/checkout" tag v0.0.2
 git -C "$tmp/checkout" push origin refs/tags/v0.0.2 >/dev/null 2>&1
 expect_failure existing-remote-tag 0.0.2 GITHUB_REF=refs/heads/main GITHUB_SHA="$sha"
-
 printf 'PASS: 1 positive and 7 negative pre-tag controls\n'

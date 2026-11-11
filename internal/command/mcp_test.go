@@ -164,14 +164,30 @@ func TestMCPAddRemoteSendsURLAndHeaders(t *testing.T) {
 	service := &fakeMCPService{}
 	var out, stderr strings.Builder
 	runner := &Runner{Out: &out, Err: &stderr, In: strings.NewReader("yes\n"), NewClient: func(string) (sdk.Client, error) { return mcpFakeClient{mcp: service}, nil }}
-	if code := runner.Run(context.Background(), []string{"mcp", "add", "remote-fixture", "--url", "https://mcp.example.com/mcp", "--header", "X-Team: docs"}); code != 0 {
+	if code := runner.Run(context.Background(), []string{"mcp", "add", "remote-fixture", "--url", "https://mcp.example.com/mcp", "--secret-header", "X-API-Key: ${api_key}"}); code != 0 {
 		t.Fatalf("add code=%d stderr=%q", code, stderr.String())
 	}
-	if service.registerConfig.Name != "remote-fixture" || service.registerConfig.URL != "https://mcp.example.com/mcp" || service.registerConfig.Headers["X-Team"] != "docs" {
+	if service.registerConfig.Name != "remote-fixture" || service.registerConfig.URL != "https://mcp.example.com/mcp" || len(service.registerConfig.Headers) != 0 || service.registerConfig.SecretHeaders["X-API-Key"] != "${api_key}" {
 		t.Fatalf("register config=%+v", service.registerConfig)
 	}
 	if service.registerConfig.Command != "" {
 		t.Fatalf("remote registration carried a command: %+v", service.registerConfig)
+	}
+}
+
+func TestMCPAddDockerHeaderAliasUsesVaultField(t *testing.T) {
+	original := requireMCPApprovalTerminal
+	requireMCPApprovalTerminal = func(io.Reader) error { return nil }
+	t.Cleanup(func() { requireMCPApprovalTerminal = original })
+	service := &fakeMCPService{}
+	var out, stderr strings.Builder
+	runner := &Runner{Out: &out, Err: &stderr, In: strings.NewReader("yes\n"), NewClient: func(string) (sdk.Client, error) { return mcpFakeClient{mcp: service}, nil }}
+	args := []string{"mcp", "add", "remote-fixture", "--url", "https://mcp.example.com/mcp", "--header", "Authorization: Bearer ${api_key}", "--header", "Accept: ${accept}"}
+	if code := runner.Run(context.Background(), args); code != 0 {
+		t.Fatalf("add code=%d stderr=%q", code, stderr.String())
+	}
+	if len(service.registerConfig.Headers) != 0 || service.registerConfig.SecretHeaders["Authorization"] != "Bearer ${api_key}" || service.registerConfig.SecretHeaders["Accept"] != "${accept}" {
+		t.Fatalf("register config=%+v", service.registerConfig)
 	}
 }
 
@@ -185,18 +201,54 @@ func TestMCPAddRejectsAmbiguousAndSecretRemote(t *testing.T) {
 	if code := runner.Run(context.Background(), []string{"mcp", "add", "fixture", "--url", "https://mcp.example.com/mcp", "--command", "/bin/false"}); code != 2 {
 		t.Fatalf("ambiguous add code=%d want 2", code)
 	}
-	if code := runner.Run(context.Background(), []string{"mcp", "add", "fixture", "--url", "https://mcp.example.com/mcp", "--header", "Authorization: Bearer x"}); code != 2 || service.registerCalls != 0 {
-		t.Fatalf("secret header add code=%d register=%d", code, service.registerCalls)
+	for _, header := range []string{"Authorization: Bearer x", "X-API-Key: literal", "X-Session: credential"} {
+		if code := runner.Run(context.Background(), []string{"mcp", "add", "fixture", "--url", "https://mcp.example.com/mcp", "--header", header}); code != 2 || service.registerCalls != 0 {
+			t.Fatalf("static header add code=%d register=%d", code, service.registerCalls)
+		}
+	}
+	if code := runner.Run(context.Background(), []string{"mcp", "add", "fixture", "--url", "https://mcp.example.com/mcp", "--header", "Accept: ${accept}", "--secret-header", "accept: ${other}"}); code != 2 || service.registerCalls != 0 {
+		t.Fatalf("duplicate alias header add code=%d register=%d", code, service.registerCalls)
+	}
+}
+
+func TestMCPAddErrorDoesNotEchoMalformedHeaderValue(t *testing.T) {
+	const canary = "credential-canary-do-not-print"
+	original := requireMCPApprovalTerminal
+	requireMCPApprovalTerminal = func(io.Reader) error { return nil }
+	t.Cleanup(func() { requireMCPApprovalTerminal = original })
+	service := &fakeMCPService{}
+	for _, flag := range []string{"--header", "--secret-header"} {
+		t.Run(flag, func(t *testing.T) {
+			var out, stderr strings.Builder
+			runner := &Runner{Out: &out, Err: &stderr, NewClient: func(string) (sdk.Client, error) { return mcpFakeClient{mcp: service}, nil }}
+			args := []string{"mcp", "add", "fixture", "--url", "https://mcp.example.com/mcp", flag, canary}
+			if code := runner.Run(context.Background(), args); code != 2 {
+				t.Fatalf("add code=%d want 2, stderr=%q", code, stderr.String())
+			}
+			if strings.Contains(stderr.String(), canary) {
+				t.Fatalf("stderr leaked credential canary: %q", stderr.String())
+			}
+		})
 	}
 }
 
 func TestMCPAuthorizationHeaderRequiresVaultPlaceholder(t *testing.T) {
-	if _, err := parseMCPHeaders([]string{"Authorization: Bearer literal-secret"}); err == nil {
+	if _, _, err := parseMCPRemoteHeaders([]string{"Authorization: Bearer literal-secret"}, nil); err == nil {
 		t.Fatal("accepted literal authorization material")
 	}
-	headers, err := parseMCPHeaders([]string{"Authorization: Bearer ${token}"})
+	staticHeaders, aliasHeaders, err := parseMCPRemoteHeaders([]string{"Authorization: Bearer ${token}"}, nil)
+	if err != nil || len(staticHeaders) != 0 || aliasHeaders["Authorization"] != "Bearer ${token}" {
+		t.Fatalf("Docker-compatible header alias=%v static=%v err=%v", aliasHeaders, staticHeaders, err)
+	}
+	headers, err := parseMCPSecretHeaders([]string{"Authorization: Bearer ${token}"})
 	if err != nil || headers["Authorization"] != "Bearer ${token}" {
-		t.Fatalf("headers=%v err=%v", headers, err)
+		t.Fatalf("secret headers=%v err=%v", headers, err)
+	}
+	if _, err := parseMCPSecretHeaders([]string{"X-API-Key: literal-secret"}); err == nil {
+		t.Fatal("accepted literal secret header value")
+	}
+	if _, _, err := parseMCPRemoteHeaders([]string{"Accept: application/json"}, nil); err == nil {
+		t.Fatal("accepted a literal custom header value")
 	}
 	for _, service := range []string{"mcp:fixture:token", "mcp:Fixture.server:api_token"} {
 		if !validServiceSecret(service) {
@@ -206,6 +258,33 @@ func TestMCPAuthorizationHeaderRequiresVaultPlaceholder(t *testing.T) {
 	for _, service := range []string{"mcp:../fixture:token", "mcp:fixture:../token", "mcp:fixture:token:extra"} {
 		if validServiceSecret(service) {
 			t.Errorf("accepted invalid MCP vault key %q", service)
+		}
+	}
+}
+
+func TestMCPHeaderParseErrorsRedactInput(t *testing.T) {
+	const canary = "credential-canary-do-not-print"
+	for _, input := range []string{
+		canary,
+		"X-API-Key: " + canary + "\r\nInjected: value",
+		"X-API-Key\x00: ${token}",
+		"X-API-Key: ${token\x00}",
+	} {
+		for name, parser := range map[string]func([]string) (map[string]string, error){
+			"header alias": func(values []string) (map[string]string, error) {
+				_, headers, err := parseMCPRemoteHeaders(values, nil)
+				return headers, err
+			},
+			"secret": parseMCPSecretHeaders,
+		} {
+			_, err := parser([]string{input})
+			if err == nil {
+				t.Errorf("%s parser accepted malformed header", name)
+				continue
+			}
+			if strings.Contains(err.Error(), canary) {
+				t.Errorf("%s parse error leaked credential canary: %q", name, err)
+			}
 		}
 	}
 }
