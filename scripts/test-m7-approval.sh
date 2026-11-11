@@ -69,3 +69,12 @@ if [[ -f "$root/.github/workflows/release.yml" ]]; then
   grep -Fq '  workflow_dispatch:' "$root/.github/workflows/release.yml"
 fi
 printf 'PASS: tag write token is isolated; release dispatch has a separate minimal job\n'
+
+release_workflow="$root/.github/workflows/release.yml"
+grep -Fq 'release_tag:' "$release_workflow"
+grep -Fq "github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name" "$release_workflow"
+grep -Fq 'Mark the container workspace safe for Git' "$release_workflow"
+grep -Fq 'git config --global --add safe.directory "$GITHUB_WORKSPACE"' "$release_workflow"
+grep -Fq 'if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && "$GITHUB_REF" != "refs/heads/main" ]]' "$release_workflow"
+grep -Fq 'git merge-base --is-ancestor "$tag_commit" origin/main' "$release_workflow"
+printf 'PASS: release retry checks an explicit tag from protected main and marks only its workspace safe\n'

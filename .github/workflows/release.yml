@@ -5,6 +5,11 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing immutable release tag to build from protected main
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -37,13 +42,15 @@ jobs:
       artifact-metadata: write
     env:
       GOTOOLCHAIN: local
-      TAG: ${{ github.ref_name }}
+      TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ github.ref }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Mark the container workspace safe for Git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: Fetch protected main for ancestry validation
         run: git fetch --no-tags origin main:refs/remotes/origin/main
       - name: Verify pinned Go toolchain
@@ -52,7 +59,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "Manual release must run from protected main." >&2
+            exit 1
+          fi
           tag_commit=$(git rev-parse "refs/tags/$TAG^{commit}")
           head_commit=$(git rev-parse HEAD)
           [[ "$tag_commit" == "$head_commit" ]]
@@ -81,7 +92,7 @@ jobs:
       - name: Generate SBOM
         run: cyclonedx-gomod mod -json -licenses -type library -output dist/rsbx.cdx.json .
       - name: Generate checksums
-        run: (cd dist && sha256sum * > SHA256SUMS)
+        run: (cd dist && sha256sum -- * > SHA256SUMS)
       - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
           subject-path: dist/rsbx-darwin-arm64,dist/rsbx-darwin-amd64,dist/rsbx-linux-arm64,dist/rsbx-linux-amd64
@@ -102,11 +113,11 @@ jobs:
     permissions:
       contents: write
     env:
-      TAG: ${{ github.ref_name }}
+      TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ github.ref }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}
           fetch-depth: 0
           persist-credentials: false
       - name: Revalidate release tag before publishing
