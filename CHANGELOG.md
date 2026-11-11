@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.0.44 — 2026-11-11
+
+- Rebuild the alpha from its immutable tag so release provenance identifies the exact source commit.
+- Fix the containerized release workflow and add GitHub Actions workflow linting to CI.
+
+
 ## v0.0.43 — 2026-11-11
 
 - Reject all static remote MCP headers; require host-vault references for every remote header.
