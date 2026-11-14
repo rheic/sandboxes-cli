@@ -18,6 +18,7 @@ import (
 )
 
 const (
+	loopbackHost = "127.0.0.1"
 	tcpProtocol  = "tcp"
 	udpProtocol  = "udp"
 	tcp4Protocol = "tcp4"
@@ -65,7 +66,7 @@ func parsePortSpec(value string, allocateHost bool) (sdk.Port, error) {
 
 func parsePortProtocol(value string) (protocol, hostIP, family string, err error) {
 	protocol = tcpProtocol
-	hostIP = "127.0.0.1"
+	hostIP = loopbackHost
 	if _, after, found := strings.Cut(value, "/"); found {
 		switch after {
 		case tcpProtocol:

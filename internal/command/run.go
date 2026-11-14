@@ -33,6 +33,8 @@ terminal, it reuses automatically. --new always creates a fresh sandbox.
 With --name, rsbx reuses and restarts that sandbox unless --new is also set.
 With --detach, rsbx creates or starts the sandbox, prints its ID, and exits.
 --rm removes the sandbox after the attached agent session exits.
+--clone uses a read-only host Git source and a private in-guest clone. The
+source must be the root of a Git repository with a .git directory.
 
 Agents:
   kimi                      available (Rheic extension)
@@ -43,6 +45,7 @@ Agents:
 Flags:
       --name NAME   sandbox name; reuse and restart it when it already exists
       --new         always create a new sandbox instead of reusing the named one
+      --clone       run on a private in-guest clone of the host Git repository
   -d, --detach      create and start without attaching
       --image REF                 image reference override for a new sandbox
   -t, --template REF              container image for a new sandbox (alias for --image)
@@ -152,6 +155,8 @@ type runOptions struct {
 	envFiles         []string
 	detach           bool
 	remove           bool
+	clone            bool
+	cloneSourcePath  string
 	help             bool
 }
 
@@ -179,6 +184,10 @@ func (r *Runner) run(ctx context.Context, args []string) int {
 	}
 	workspacePaths, workspacesExplicit, err = prepareRunKitOptions(ctx, &opts, &agent, workspacePaths, workspacesExplicit)
 	if err != nil {
+		_, _ = fmt.Fprintf(r.Err, "rsbx run: %v\n", err)
+		return 2
+	}
+	if err := prepareRunCloneSource(ctx, &opts, workspacePaths); err != nil {
 		_, _ = fmt.Fprintf(r.Err, "rsbx run: %v\n", err)
 		return 2
 	}
@@ -217,6 +226,33 @@ func (r *Runner) run(ctx context.Context, args []string) int {
 		return 1
 	}
 	return r.runAttached(ctx, client, opts, sandbox, created, agent, workspaces, workspacesExplicit, agentArgs, resources)
+}
+
+func resolveRunCloneSource(ctx context.Context, clone bool, paths []string) (string, error) {
+	if !clone {
+		return "", nil
+	}
+	workspaces, err := resolveWorkspaces(paths, true)
+	if err != nil {
+		return "", err
+	}
+	if len(workspaces) != 1 {
+		return "", errors.New("--clone requires exactly one Git workspace path")
+	}
+	workspace, err := cloneWorkspaceForMount(ctx, workspaces[0])
+	if err != nil {
+		return "", err
+	}
+	return workspace.Path, nil
+}
+
+func prepareRunCloneSource(ctx context.Context, opts *runOptions, paths []string) error {
+	path, err := resolveRunCloneSource(ctx, opts.clone, paths)
+	if err != nil {
+		return err
+	}
+	opts.cloneSourcePath = path
+	return nil
 }
 
 func prepareRunKitOptions(ctx context.Context, opts *runOptions, agent *string, workspacePaths []string, workspacesExplicit bool) ([]string, bool, error) {
@@ -458,14 +494,24 @@ func hasEnvironmentKey(env []string, target string) bool {
 	return false
 }
 
-//nolint:gocognit,gocyclo,cyclop,nestif,gocritic // attach/terminal/detach semantics form one transaction.
+//nolint:gocognit,gocyclo,cyclop,nestif,gocritic,funlen // attach/terminal/detach semantics form one transaction.
 func (r *Runner) runAttached(ctx context.Context, client sdk.Client, opts runOptions, sandbox *sdk.Sandbox, created bool, agent string, workspaces []sdk.Workspace, workspacesExplicit bool, agentArgs []string, resources runResources) int {
 	if sandbox == nil || sandbox.ID == "" {
 		r.error(errors.New("sandbox creation returned no sandbox"))
 		return 1
 	}
 	if !created {
-		if err := checkReusedRun(sandbox, workspaces, workspacesExplicit); err != nil {
+		if opts.clone && sandbox.Clone == nil {
+			r.error(errors.New("sandbox does not have clone mode enabled; refusing to start the agent"))
+			return 1
+		}
+		if opts.clone {
+			if err := checkReusedCloneSource(sandbox, opts.cloneSourcePath); err != nil {
+				r.error(err)
+				return 1
+			}
+		}
+		if err := checkReusedRun(sandbox, workspaces, workspacesExplicit, opts.clone); err != nil {
 			r.error(err)
 			return 1
 		}
@@ -475,10 +521,39 @@ func (r *Runner) runAttached(ctx context.Context, client sdk.Client, opts runOpt
 		r.error(err)
 		return 1
 	}
+	cloneWorkdir := ""
+	if opts.clone && sandbox.Clone == nil {
+		err := errors.New("daemon did not return clone metadata; refusing to start the agent")
+		r.error(err)
+		if created {
+			if cleanupErr := r.removeRunSandbox(ctx, client, sandbox); cleanupErr != nil {
+				r.error(fmt.Errorf("remove unsupported clone sandbox: %w", cleanupErr))
+			}
+		}
+		return 1
+	}
+	if sandbox.Clone != nil {
+		fresh, err := client.Sandboxes().Get(ctx, sandbox.ID)
+		if err != nil {
+			r.error(err)
+			return 1
+		}
+		cloneWorkdir, err = r.activateCloneSandbox(ctx, fresh, "")
+		if err != nil {
+			r.error(err)
+			if created {
+				if cleanupErr := r.removeRunSandbox(ctx, client, sandbox); cleanupErr != nil {
+					r.error(fmt.Errorf("remove unsupported clone sandbox: %w", cleanupErr))
+				}
+			}
+			return 1
+		}
+		sandbox = fresh
+	}
 	if opts.detach {
 		if argv := agentDetachCommand(agent); len(argv) > 0 {
 			code, err := sdk.ExecService(client).Exec(ctx, sdk.ExecRequest{
-				SandboxID: sandbox.ID, Argv: argv, Env: resources.env, Stdout: r.Out, Stderr: r.Err,
+				SandboxID: sandbox.ID, Argv: argv, Workdir: cloneWorkdir, Env: resources.env, Stdout: r.Out, Stderr: r.Err,
 			})
 			if err != nil {
 				r.error(fmt.Errorf("start detached agent: %w", err))
@@ -507,14 +582,25 @@ func (r *Runner) runAttached(ctx context.Context, client sdk.Client, opts runOpt
 			closeOnEOF = fileClosesOnEOF(file)
 		}
 	}
-	code := r.execSessionMode(ctx, client, sandbox.ID, runArgv(agent, agentArgs), execOptions{env: resources.env}, interactive, tty, closeOnEOF)
+	code := r.execSessionMode(ctx, client, sandbox.ID, runArgv(agent, agentArgs), execOptions{workdir: cloneWorkdir, env: resources.env}, interactive, tty, closeOnEOF)
 	if opts.remove {
-		if err := removeRunSandbox(ctx, client, sandbox); err != nil {
+		if err := r.removeRunSandbox(ctx, client, sandbox); err != nil {
 			r.error(err)
 			return 1
 		}
 	}
 	return code
+}
+
+func checkReusedCloneSource(sandbox *sdk.Sandbox, requested string) error {
+	if sandbox == nil || sandbox.Clone == nil || requested == "" {
+		return errors.New("sandbox clone source does not match the requested Git workspace; refusing to start the agent")
+	}
+	source, err := canonicalCloneSourcePath(cloneSourceWorkspaceFromSandbox(sandbox))
+	if err != nil || source == "" || source != requested {
+		return errors.New("sandbox clone source does not match the requested Git workspace; refusing to start the agent")
+	}
+	return nil
 }
 
 // fileClosesOnEOF reports whether a non-terminal stdin should close the
@@ -528,7 +614,11 @@ func fileClosesOnEOF(file *os.File) bool {
 	return info.Mode().IsRegular() || info.Mode()&os.ModeNamedPipe != 0
 }
 
-func removeRunSandbox(ctx context.Context, client sdk.Client, sandbox *sdk.Sandbox) error {
+func (r *Runner) removeRunSandbox(ctx context.Context, client sdk.Client, sandbox *sdk.Sandbox) error {
+	current, err := client.Sandboxes().Get(ctx, sandbox.ID)
+	if err != nil {
+		return err
+	}
 	op, err := client.Sandboxes().Delete(ctx, sandbox.ID, sdk.DeleteOptions{Force: true})
 	if err != nil {
 		return err
@@ -536,7 +626,7 @@ func removeRunSandbox(ctx context.Context, client sdk.Client, sandbox *sdk.Sandb
 	if op != nil && op.State == sdk.StateFailed {
 		return fmt.Errorf("remove sandbox %s failed: %s", sandbox.Name, op.Error)
 	}
-	return nil
+	return removeCloneRemoteForSandbox(ctx, current, r.gitConfigCommand())
 }
 
 //nolint:gocritic // runOptions is an immutable value object.
@@ -651,6 +741,9 @@ func parseRunValueFlag(args []string, index int, arg string, opts *runOptions) (
 		return 1, true, nil
 	case removeFlag:
 		opts.remove = true
+		return 1, true, nil
+	case "--clone":
+		opts.clone = true
 		return 1, true, nil
 	case newFlag:
 		opts.new = true
@@ -867,14 +960,18 @@ func runTerminal(input any) (interactive, tty bool) {
 	return true, true
 }
 
-func checkReusedRun(sandbox *sdk.Sandbox, requested []sdk.Workspace, explicit bool) error {
+func checkReusedRun(sandbox *sdk.Sandbox, requested []sdk.Workspace, explicit, clone bool) error {
 	if !explicit {
 		return nil
 	}
-	return checkReusedWorkspace(sandbox, requested)
+	return checkReusedWorkspaceMode(sandbox, requested, clone)
 }
 
 func checkReusedWorkspace(sandbox *sdk.Sandbox, requested []sdk.Workspace) error {
+	return checkReusedWorkspaceMode(sandbox, requested, false)
+}
+
+func checkReusedWorkspaceMode(sandbox *sdk.Sandbox, requested []sdk.Workspace, clone bool) error {
 	if len(requested) == 0 {
 		return nil
 	}
@@ -886,7 +983,7 @@ func checkReusedWorkspace(sandbox *sdk.Sandbox, requested []sdk.Workspace) error
 		return fmt.Errorf("sandbox %s already uses workspaces %v; refusing to ignore %v", sandbox.Name, workspacePaths(existing), workspacePaths(requested))
 	}
 	for i := range existing {
-		if existing[i].ReadOnly != requested[i].ReadOnly {
+		if !clone && existing[i].ReadOnly != requested[i].ReadOnly {
 			return fmt.Errorf("sandbox %s already uses workspace modes %v; refusing to ignore %v", sandbox.Name, existing, requested)
 		}
 	}
@@ -910,8 +1007,8 @@ func (r *Runner) reuseOrCreateSandbox(ctx context.Context, client sdk.Client, op
 	if err != nil {
 		return nil, false, nil, err
 	}
-	created, _, err := r.createRunSandbox(ctx, client, opts, agent, paths, workspaces, resources)
-	return created, true, workspaces, err
+	created, owned, err := r.createRunSandbox(ctx, client, opts, agent, paths, workspaces, resources)
+	return created, owned, workspaces, err
 }
 
 // reuseNamedRunSandbox reuses an existing sandbox selected by --name unless
@@ -1039,6 +1136,18 @@ func (r *Runner) createRunSandbox(ctx context.Context, client sdk.Client, opts r
 	if len(workspaces) > 0 {
 		workspace = workspaces[0].Path
 	}
+	var cloneOptions *sdk.CloneOptions
+	if opts.clone {
+		if len(workspaces) != 1 {
+			return nil, false, errors.New("--clone requires exactly one Git workspace path")
+		}
+		workspaces[0], err = cloneWorkspaceForMount(ctx, workspaces[0])
+		if err != nil {
+			return nil, false, err
+		}
+		workspace = workspaces[0].Path
+		cloneOptions = &sdk.CloneOptions{SourceWorkspacePath: workspaces[0].Path}
+	}
 	op, err := client.Sandboxes().Create(ctx, sdk.CreateRequest{
 		Name:             name,
 		Image:            opts.image,
@@ -1055,6 +1164,7 @@ func (r *Runner) createRunSandbox(ctx context.Context, client sdk.Client, opts r
 		Privileged:       opts.privileged,
 		Env:              envMap(resources.env),
 		OAuthCredentials: opts.oauthCredentials,
+		Clone:            cloneOptions,
 	})
 	if err != nil {
 		return r.recoverRunCreate(ctx, client, opts, err)
@@ -1067,13 +1177,13 @@ func (r *Runner) createRunSandbox(ctx context.Context, client sdk.Client, opts r
 		if !found {
 			return nil, false, errors.New("sandbox creation returned no sandbox ID")
 		}
-		return created, true, nil
+		return created, false, nil
 	}
 	created, err := client.Sandboxes().Get(ctx, op.SandboxID)
 	if err != nil {
 		return nil, false, err
 	}
-	return created, true, nil
+	return created, op.Kind == "create", nil
 }
 
 //nolint:gocritic // runOptions is an immutable value object.

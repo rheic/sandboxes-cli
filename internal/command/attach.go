@@ -53,6 +53,20 @@ func (r *Runner) attach(ctx context.Context, args []string) int {
 		r.error(err)
 		return 1
 	}
+	workdir := ""
+	if sb.Clone != nil {
+		fresh, err := client.Sandboxes().Get(ctx, id)
+		if err != nil {
+			r.error(err)
+			return 1
+		}
+		workdir, err = r.activateCloneSandbox(ctx, fresh, "")
+		if err != nil {
+			r.error(err)
+			return 1
+		}
+		sb = fresh
+	}
 	argv := agentCommandArgs(sb.Agent)
 	if *shell || sb.Agent == "" {
 		argv = []string{shellPath}
@@ -63,5 +77,5 @@ func (r *Runner) attach(ctx context.Context, args []string) int {
 		tty = term.IsTerminal(int(file.Fd()))
 	}
 	closeOnEOF := true
-	return r.execSessionMode(ctx, client, id, argv, execOptions{}, interactive, tty, closeOnEOF)
+	return r.execSessionMode(ctx, client, id, argv, execOptions{workdir: workdir}, interactive, tty, closeOnEOF)
 }

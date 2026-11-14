@@ -57,6 +57,7 @@ agents and their pinned images. Omit PATH for no workspace mount.
 Flags:
   --name NAME                 sandbox name
   --workspace PATH[:ro]       additional workspace (repeatable)
+  --clone                     use a private in-guest Git clone of PATH
   -p, --publish [[HOST_IP:]HOST_PORT:]GUEST[/tcp|udp|tcp4|udp4|tcp6|udp6]
                               publish a TCP/UDP guest port (repeatable)
   --allow-network CIDR[:PORT] allow egress (repeatable)
@@ -93,6 +94,7 @@ type Runner struct {
 	Socket       string
 	NewClient    func(address string) (sdk.Client, error)
 	SecretScreen func() tcell.Screen
+	gitConfig    gitConfigCommand
 }
 
 // NewRunner creates a CLI runner.
@@ -1220,6 +1222,7 @@ type createOptions struct {
 	oauthCredentials []sdk.OAuthCredential
 	profile          string
 	privileged       bool
+	clone            *sdk.CloneOptions
 }
 
 func (r *Runner) create(ctx context.Context, args []string) int {
@@ -1269,13 +1272,37 @@ func (r *Runner) create(ctx context.Context, args []string) int {
 		Privileged:       opts.privileged,
 		Env:              envMap(opts.env),
 		OAuthCredentials: opts.oauthCredentials,
+		Clone:            opts.clone,
 	})
 	if err != nil {
 		r.error(err)
 		return 1
 	}
+	if opts.clone != nil {
+		if err := r.activateCreatedClone(ctx, client, op, name, &opts); err != nil {
+			r.error(err)
+			return 1
+		}
+	}
 	r.printCreatedSandbox(ctx, client, name, op)
 	return 0
+}
+
+func (r *Runner) activateCreatedClone(ctx context.Context, client sdk.Client, op *sdk.Operation, name string, opts *createOptions) error {
+	sandbox, err := lookupSandboxForReport(ctx, client, opSandboxID(op), name)
+	if err != nil {
+		if opts.idempotencyKey == "" {
+			return errors.Join(err, cleanupCloneSandbox(ctx, client, op, sandbox, r.gitConfigCommand()))
+		}
+		return errors.Join(err, errors.New("sandbox retained because idempotency may have reused a pre-existing resource"))
+	}
+	if _, err := r.activateCloneSandbox(ctx, sandbox, opts.clone.SourceWorkspacePath); err != nil {
+		if opts.idempotencyKey != "" {
+			return errors.Join(err, errors.New("sandbox retained because idempotency may have reused a pre-existing resource"))
+		}
+		return errors.Join(err, cleanupCloneSandbox(ctx, client, op, sandbox, r.gitConfigCommand()))
+	}
+	return nil
 }
 
 // printCreatedSandbox renders the human create summary; operation records stay
@@ -1418,6 +1445,7 @@ func parseCreateOptions(ctx context.Context, args []string) (createOptions, bool
 	memory := fs.String("memory", "", "memory limit such as 512m or 2g (empty selects the daemon default)")
 	profile := fs.String("policy-profile", "", "egress profile: deny-all, balanced or sbx-compat")
 	privileged := fs.Bool("docker", false, "run the dedicated Docker profile")
+	cloneMode := fs.Bool("clone", false, "run the agent on a private in-guest clone of PATH")
 	kitPath := fs.String("kit", "", "apply a local kit definition")
 	var denyWriteFlags stringListFlag
 	fs.Var(&denyWriteFlags, "deny-write", "mount PATH read-only (repeatable)")
@@ -1461,10 +1489,7 @@ func parseCreateOptions(ctx context.Context, args []string) (createOptions, bool
 	if err != nil {
 		return createOptions{}, false, err
 	}
-	for _, target := range denyWriteFlags {
-		workspaceFlags = append(workspaceFlags, target+":ro")
-	}
-	workspaces, err := resolveCreateWorkspaces(workspaceFlags, paths)
+	workspaces, cloneOptions, err := prepareCreateWorkspaces(ctx, workspaceFlags, paths, denyWriteFlags, *cloneMode)
 	if err != nil {
 		return createOptions{}, false, err
 	}
@@ -1483,8 +1508,34 @@ func parseCreateOptions(ctx context.Context, args []string) (createOptions, bool
 	return createOptions{
 		name: name, agent: agent, image: imageRef, workspace: workspace, idempotencyKey: *idempotency,
 		workspaces: workspaces, ports: ports, allow: allow, deny: deny,
-		cpus: cpuCount, memoryMiB: memoryMiB, env: env, oauthCredentials: oauthCredentials, profile: *profile, privileged: *privileged,
+		cpus: cpuCount, memoryMiB: memoryMiB, env: env, oauthCredentials: oauthCredentials, profile: *profile, privileged: *privileged, clone: cloneOptions,
 	}, false, nil
+}
+
+func prepareCreateWorkspaces(ctx context.Context, workspaceFlags stringListFlag, paths, denyWrites []string, clone bool) ([]sdk.Workspace, *sdk.CloneOptions, error) {
+	for _, target := range denyWrites {
+		workspaceFlags = append(workspaceFlags, target+":ro")
+	}
+	workspaces, err := resolveCreateWorkspaces(workspaceFlags, paths)
+	if err != nil {
+		return nil, nil, err
+	}
+	return applyCreateCloneMode(ctx, clone, workspaces)
+}
+
+func applyCreateCloneMode(ctx context.Context, clone bool, workspaces []sdk.Workspace) ([]sdk.Workspace, *sdk.CloneOptions, error) {
+	if !clone {
+		return workspaces, nil, nil
+	}
+	if len(workspaces) != 1 {
+		return nil, nil, errors.New("--clone requires exactly one Git workspace path")
+	}
+	workspace, err := cloneWorkspaceForMount(ctx, workspaces[0])
+	if err != nil {
+		return nil, nil, err
+	}
+	workspaces[0] = workspace
+	return workspaces, &sdk.CloneOptions{SourceWorkspacePath: workspace.Path}, nil
 }
 
 func (r *Runner) get(ctx context.Context, args []string) int {
@@ -1650,6 +1701,12 @@ func (r *Runner) deleteSandboxes(ctx context.Context, client sdk.Client, targets
 			failed = true
 			continue
 		}
+		sb, getErr := client.Sandboxes().Get(ctx, id)
+		if getErr != nil {
+			r.error(getErr)
+			failed = true
+			continue
+		}
 		op, err := client.Sandboxes().Delete(ctx, id, sdk.DeleteOptions{Force: true})
 		if err != nil {
 			r.error(err)
@@ -1660,6 +1717,10 @@ func (r *Runner) deleteSandboxes(ctx context.Context, client sdk.Client, targets
 			r.error(fmt.Errorf("remove sandbox %s failed: %s", name, op.Error))
 			failed = true
 			continue
+		}
+		if err := removeCloneRemoteForSandbox(ctx, sb, r.gitConfigCommand()); err != nil {
+			r.error(err)
+			failed = true
 		}
 		operations = append(operations, op)
 		removed = append(removed, name)
@@ -1776,6 +1837,9 @@ func (r *Runner) runLifecycleTarget(ctx context.Context, client sdk.Client, name
 	}
 	if op != nil && op.State == sdk.StateFailed {
 		return nil, fmt.Errorf("%s sandbox %s failed: %s", name, target, op.Error)
+	}
+	if err := r.reconcileCloneLifecycle(ctx, client, id, name == startCommand); err != nil {
+		return nil, err
 	}
 	return op, nil
 }

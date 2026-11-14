@@ -394,7 +394,7 @@ func (r *Runner) environmentRun(ctx context.Context, args []string) int {
 	request := buildEnvironmentCreateRequest(plan, nil, workspacePath, memory)
 	created := false
 	if !found {
-		sandbox, err = createEnvironmentRunSandbox(ctx, client, plan.Name, request, entries)
+		sandbox, err = createEnvironmentRunSandbox(ctx, client, plan.Name, &request, entries)
 		if err != nil {
 			r.error(err)
 			return 1
@@ -418,7 +418,8 @@ func (r *Runner) preflightEnvironmentRun(ctx context.Context, client sdk.Client,
 		return nil, false, false, err
 	}
 	if found {
-		validated, err := validateEnvironmentRunSandbox(sandbox, plan, buildEnvironmentCreateRequest(plan, nil, workspacePath, memory))
+		request := buildEnvironmentCreateRequest(plan, nil, workspacePath, memory)
+		validated, err := validateEnvironmentRunSandbox(sandbox, plan, &request)
 		return validated, true, false, err
 	}
 	err = r.approveEnvironmentCreate(plan, force, commandRun)
@@ -428,10 +429,10 @@ func (r *Runner) preflightEnvironmentRun(ctx context.Context, client sdk.Client,
 	return nil, false, false, err
 }
 
-func createEnvironmentRunSandbox(ctx context.Context, client sdk.Client, name string, request sdk.CreateRequest, environment []string) (*sdk.Sandbox, error) {
+func createEnvironmentRunSandbox(ctx context.Context, client sdk.Client, name string, request *sdk.CreateRequest, environment []string) (*sdk.Sandbox, error) {
 	request.Env = envMap(environment)
 	defer clear(request.Env)
-	op, err := client.Sandboxes().Create(ctx, request)
+	op, err := client.Sandboxes().Create(ctx, *request)
 	if err != nil {
 		return nil, err
 	}
@@ -474,7 +475,7 @@ func (r *Runner) environmentRemove(ctx context.Context, args []string) int {
 		return 1
 	}
 	defer func() { _ = client.Close() }()
-	sandbox, found, err := findEnvironmentRemovalTarget(ctx, client, plan, request)
+	sandbox, found, err := findEnvironmentRemovalTarget(ctx, client, plan, &request)
 	if err != nil {
 		r.error(err)
 		return 1
@@ -507,7 +508,7 @@ func (r *Runner) environmentRemove(ctx context.Context, args []string) int {
 	return 0
 }
 
-func findEnvironmentRemovalTarget(ctx context.Context, client sdk.Client, plan envfile.Plan, request sdk.CreateRequest) (*sdk.Sandbox, bool, error) {
+func findEnvironmentRemovalTarget(ctx context.Context, client sdk.Client, plan envfile.Plan, request *sdk.CreateRequest) (*sdk.Sandbox, bool, error) {
 	sandbox, found, err := lookupSandboxByName(ctx, client, plan.Name)
 	if err != nil || !found {
 		return sandbox, found, err
@@ -521,7 +522,7 @@ func findEnvironmentRemovalTarget(ctx context.Context, client sdk.Client, plan e
 	return sandbox, true, nil
 }
 
-func validateEnvironmentRunSandbox(sandbox *sdk.Sandbox, plan envfile.Plan, request sdk.CreateRequest) (*sdk.Sandbox, error) {
+func validateEnvironmentRunSandbox(sandbox *sdk.Sandbox, plan envfile.Plan, request *sdk.CreateRequest) (*sdk.Sandbox, error) {
 	if sandbox.Agent != plan.Agent {
 		return nil, errors.New("existing sandbox agent does not match the environment")
 	}

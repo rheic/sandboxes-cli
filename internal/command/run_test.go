@@ -45,14 +45,15 @@ func (c runClient) SessionExecutor() sdk.SessionExecutor {
 
 type runSandbox struct {
 	fakeSandbox
-	items       []sdk.Sandbox
-	created     sdk.CreateRequest
-	createCalls int
-	startCalls  int
-	deleteCalls int
-	deleteID    string
-	deleteForce bool
-	deleteErr   error
+	items             []sdk.Sandbox
+	created           sdk.CreateRequest
+	createCalls       int
+	startCalls        int
+	deleteCalls       int
+	deleteID          string
+	deleteForce       bool
+	deleteErr         error
+	suppressCloneInfo bool
 }
 
 func (s *runSandbox) Create(_ context.Context, req sdk.CreateRequest) (*sdk.Operation, error) {
@@ -62,7 +63,14 @@ func (s *runSandbox) Create(_ context.Context, req sdk.CreateRequest) (*sdk.Oper
 	for key, value := range req.Env {
 		s.created.Env[key] = value
 	}
-	item := sdk.Sandbox{ID: "sb-run", Name: req.Name, State: sdk.StateRunning, Image: req.Image, Workspace: req.Workspace}
+	item := sdk.Sandbox{ID: "sb-run", Name: req.Name, State: sdk.StateRunning, Image: req.Image, Workspace: req.Workspace, Workspaces: append([]sdk.Workspace(nil), req.Workspaces...)}
+	if req.Clone != nil && !s.suppressCloneInfo {
+		item.Clone = &sdk.CloneInfo{
+			GuestWorkdir: "/workspace/private",
+			RemoteName:   "sandbox-" + req.Name,
+			GitEndpoint:  &sdk.GitEndpoint{HostIP: "127.0.0.1", Port: 49152, Repository: "repo"},
+		}
+	}
 	s.items = append(s.items, item)
 	return &sdk.Operation{ID: "op-create", SandboxID: item.ID, Kind: "create", State: sdk.StateDone}, nil
 }
@@ -96,6 +104,9 @@ func (s *runSandbox) Start(_ context.Context, id string) (*sdk.Operation, error)
 	for i := range s.items {
 		if s.items[i].ID == id {
 			s.items[i].State = sdk.StateRunning
+			if s.items[i].Clone != nil {
+				s.items[i].Clone.GitEndpoint = &sdk.GitEndpoint{HostIP: "127.0.0.1", Port: 49152, Repository: "repo"}
+			}
 			s.startCalls++
 			return &sdk.Operation{ID: "op-start", State: sdk.StateDone}, nil
 		}
@@ -154,7 +165,8 @@ func TestRunCreatesStartsAndAttachesShell(t *testing.T) {
 	workspace := t.TempDir()
 	sandboxes := &runSandbox{}
 	sessions := &fakeSessions{}
-	runner, out, stderr := runTestRunner(t, runClient{sandboxes: sandboxes, sessions: sessions}, "")
+	client := runClient{sandboxes: sandboxes, sessions: sessions}
+	runner, out, stderr := runTestRunner(t, client, "")
 	if code := runner.Run(context.Background(), []string{"run", "--name", "dev", "shell", workspace}); code != 0 {
 		t.Fatalf("exit=%d stdout=%q stderr=%q", code, out.String(), stderr.String())
 	}
@@ -169,6 +181,106 @@ func TestRunCreatesStartsAndAttachesShell(t *testing.T) {
 	}
 	if sessions.req.SandboxID != "sb-run" || !sessions.closed {
 		t.Fatalf("session id=%q closed=%t", sessions.req.SandboxID, sessions.closed)
+	}
+}
+
+func TestRunCloneUsesReadOnlySourceAndDaemonGuestWorkdir(t *testing.T) {
+	workspace := initCloneTestRepo(t)
+	sandboxes := &runSandbox{}
+	sessions := &fakeSessions{}
+	runner, out, stderr := runTestRunner(t, runClient{sandboxes: sandboxes, sessions: sessions}, "")
+	if code := runner.Run(context.Background(), []string{"run", "--clone", "--name", "dev", "shell", workspace}); code != 0 {
+		t.Fatalf("exit=%d stdout=%q stderr=%q", code, out.String(), stderr.String())
+	}
+	canonicalWorkspace, err := filepath.EvalSymlinks(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sandboxes.created.Clone == nil || sandboxes.created.Clone.SourceWorkspacePath != canonicalWorkspace {
+		t.Fatalf("clone option missing from create request: %#v", sandboxes.created.Clone)
+	}
+	if len(sandboxes.created.Workspaces) != 1 || !sandboxes.created.Workspaces[0].ReadOnly || sandboxes.created.Workspaces[0].GuestPath != cloneSourceGuestPath {
+		t.Fatalf("clone source was not mounted read-only at the designated path: %#v", sandboxes.created.Workspaces)
+	}
+	if !sessions.opened || sessions.req.Workdir != "/workspace/private" {
+		t.Fatalf("agent did not receive daemon guest workdir: opened=%v request=%#v", sessions.opened, sessions.req)
+	}
+}
+
+func TestRunCloneRejectsDaemonWithoutCloneInfoBeforeAgent(t *testing.T) {
+	workspace := initCloneTestRepo(t)
+	sandboxes := &runSandbox{suppressCloneInfo: true}
+	sessions := &fakeSessions{}
+	runner, out, stderr := runTestRunner(t, runClient{sandboxes: sandboxes, sessions: sessions}, "")
+	if code := runner.Run(context.Background(), []string{"run", "--clone", "--name", "dev", "shell", workspace}); code == 0 {
+		t.Fatalf("expected failure, stdout=%q stderr=%q", out.String(), stderr.String())
+	}
+	if sessions.opened {
+		t.Fatal("agent session opened without clone metadata")
+	}
+	if sandboxes.deleteCalls != 1 || sandboxes.deleteID != "sb-run" {
+		t.Fatalf("newly-created unsupported clone sandbox was not cleaned up: %#v", sandboxes)
+	}
+}
+
+func TestRunCloneRejectsNamedSandboxWithDifferentSourceBeforeStart(t *testing.T) {
+	currentWorkspace := initCloneTestRepo(t)
+	t.Chdir(currentWorkspace)
+	otherWorkspace := initCloneTestRepo(t)
+	canonical, err := canonicalCloneSourcePath(otherWorkspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sandboxes := &runSandbox{items: []sdk.Sandbox{{
+		ID: "sb-run", Name: "dev", State: sdk.StateStopped, Agent: "shell", Workspace: canonical,
+		Workspaces: []sdk.Workspace{{Path: canonical, ReadOnly: true, GuestPath: cloneSourceGuestPath}},
+		Clone:      &sdk.CloneInfo{RemoteName: "sandbox-dev", GuestWorkdir: "/workspace/private"},
+	}}}
+	sessions := &fakeSessions{}
+	client := runClient{sandboxes: sandboxes, sessions: sessions}
+	runner, out, stderr := runTestRunner(t, client, "")
+	if code := runner.Run(context.Background(), []string{"run", "--clone", "--name", "dev", "shell"}); code == 0 {
+		t.Fatalf("mismatched source unexpectedly reused, stdout=%q stderr=%q", out.String(), stderr.String())
+	}
+	if sandboxes.startCalls != 0 || sessions.opened {
+		t.Fatalf("mismatched sandbox was started or attached: starts=%d session=%v", sandboxes.startCalls, sessions.opened)
+	}
+}
+
+func TestRunCloneRefreshesEndpointAfterStartBeforeAttaching(t *testing.T) {
+	workspace := initCloneTestRepo(t)
+	t.Chdir(workspace)
+	canonical, err := canonicalCloneSourcePath(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sandboxes := &runSandbox{items: []sdk.Sandbox{{
+		ID: "sb-run", Name: "dev", State: sdk.StateStopped, Agent: "shell", Workspace: canonical,
+		Workspaces: []sdk.Workspace{{Path: canonical, ReadOnly: true, GuestPath: cloneSourceGuestPath}},
+		Clone: &sdk.CloneInfo{
+			RemoteName: "sandbox-dev", GuestWorkdir: "/workspace/private",
+			GitEndpoint: &sdk.GitEndpoint{HostIP: "127.0.0.1", Port: 12345, Repository: "repo"},
+		},
+	}}}
+	sessions := &fakeSessions{}
+	client := runClient{sandboxes: sandboxes, sessions: sessions}
+	runner, out, stderr := runTestRunner(t, client, "")
+	if code := runner.Run(context.Background(), []string{"run", "--clone", "--name", "dev", "shell"}); code != 0 {
+		t.Fatalf("exit=%d stdout=%q stderr=%q", code, out.String(), stderr.String())
+	}
+	if sandboxes.startCalls != 1 || !sessions.opened || sessions.req.Workdir != "/workspace/private" {
+		t.Fatalf("unexpected start/attach: starts=%d opened=%v request=%#v", sandboxes.startCalls, sessions.opened, sessions.req)
+	}
+	configPath := filepath.Join(workspace, ".git", "config")
+	values := gitConfigValues(t, configPath, "remote.sandbox-dev.url")
+	if len(values) != 1 || values[0] != "git://127.0.0.1:49152/repo" {
+		t.Fatalf("host remote did not refresh from post-start endpoint: %#v", values)
+	}
+	if err := runner.reconcileCloneLifecycle(context.Background(), client, "sb-run", false); err != nil {
+		t.Fatalf("stop reconciliation failed: %v", err)
+	}
+	if got := gitConfigValues(t, configPath, "remote.sandbox-dev.url"); len(got) != 1 || got[0] != values[0] {
+		t.Fatalf("stop removed or changed the Rheic-owned remote: %#v", got)
 	}
 }
 
