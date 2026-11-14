@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -647,6 +648,10 @@ func writeGitConfigLock(lock *os.File, mode os.FileMode, contents []byte) error 
 }
 
 func syncGitConfigDirectory(directory *os.Root) error {
+	if runtime.GOOS == "windows" {
+		// Windows does not provide a portable directory fsync operation.
+		return nil
+	}
 	directoryFile, err := directory.Open(".")
 	if err != nil {
 		return fmt.Errorf("open local Git config directory for sync: %w", err)
