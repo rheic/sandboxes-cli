@@ -273,7 +273,7 @@ func TestRunCloneRefreshesEndpointAfterStartBeforeAttaching(t *testing.T) {
 	}
 	configPath := filepath.Join(workspace, ".git", "config")
 	values := gitConfigValues(t, configPath, "remote.sandbox-dev.url")
-	if len(values) != 1 || values[0] != "git://127.0.0.1:49152/repo" {
+	if len(values) != 1 || values[0] != "git://127.0.0.1:49152/repo/.git" {
 		t.Fatalf("host remote did not refresh from post-start endpoint: %#v", values)
 	}
 	if err := runner.reconcileCloneLifecycle(context.Background(), client, "sb-run", false); err != nil {

@@ -19,11 +19,11 @@ func TestValidateCloneInfo(t *testing.T) {
 		ID: "id-1", Name: "demo",
 		Clone: &sdk.CloneInfo{
 			RemoteName: "sandbox-demo", GuestWorkdir: "/workspace/demo",
-			GitEndpoint: &sdk.GitEndpoint{HostIP: "127.0.0.1", Port: 4321, Repository: "demo.git"},
+			GitEndpoint: &sdk.GitEndpoint{HostIP: "127.0.0.1", Port: 4321, Repository: "demo"},
 		},
 	}
 	workdir, url, err := validateCloneInfo(sb)
-	if err != nil || workdir != "/workspace/demo" || url != "git://127.0.0.1:4321/demo.git" {
+	if err != nil || workdir != "/workspace/demo" || url != "git://127.0.0.1:4321/demo/.git" {
 		t.Fatalf("validateCloneInfo() = %q, %q, %v", workdir, url, err)
 	}
 	badCases := []*sdk.Sandbox{
@@ -90,8 +90,8 @@ func TestReconcileCloneRemoteOwnershipAndDuplicateProtection(t *testing.T) {
 	cfg := filepath.Join(root, ".git", "config")
 	ctx := context.Background()
 	remote := "sandbox-demo"
-	first := "git://127.0.0.1:1234/demo.git"
-	second := "git://127.0.0.1:5678/demo.git"
+	first := "git://127.0.0.1:1234/demo/.git"
+	second := "git://127.0.0.1:5678/demo/.git"
 	if err := reconcileCloneRemote(ctx, root, remote, "sandbox-id", first, runGitConfig); err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func TestRemoveCloneRemotePreservesUserAddedOptions(t *testing.T) {
 	root := initCloneTestRepo(t)
 	cfg := filepath.Join(root, ".git", "config")
 	ctx := context.Background()
-	if err := reconcileCloneRemote(ctx, root, "sandbox-demo", "sandbox-id", "git://127.0.0.1:1234/demo.git", runGitConfig); err != nil {
+	if err := reconcileCloneRemote(ctx, root, "sandbox-demo", "sandbox-id", "git://127.0.0.1:1234/demo/.git", runGitConfig); err != nil {
 		t.Fatal(err)
 	}
 	if err := gitConfigSet(t, cfg, "--add", "remote.sandbox-demo.fetch", "+refs/heads/*:refs/remotes/sandbox-demo/*"); err != nil {
@@ -153,14 +153,14 @@ func TestReconcileCloneRemoteSerializesConcurrentGitConfigWriter(t *testing.T) {
 		}
 		return runGitConfig(ctx, path, args...)
 	}
-	if err := reconcileCloneRemote(ctx, root, "sandbox-demo", "sandbox-id", "git://127.0.0.1:4321/demo.git", run); err != nil {
+	if err := reconcileCloneRemote(ctx, root, "sandbox-demo", "sandbox-id", "git://127.0.0.1:4321/demo/.git", run); err != nil {
 		t.Fatal(err)
 	}
 	if concurrentErr == nil {
 		t.Fatal("concurrent Git config writer was not blocked by the config lock")
 	}
 	values := gitConfigValues(t, configPath, "remote.sandbox-demo.url")
-	if len(values) != 1 || values[0] != "git://127.0.0.1:4321/demo.git" {
+	if len(values) != 1 || values[0] != "git://127.0.0.1:4321/demo/.git" {
 		t.Fatalf("unexpected remote after serialized update: %#v", values)
 	}
 }

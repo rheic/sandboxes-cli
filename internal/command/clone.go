@@ -126,7 +126,9 @@ func cloneEndpointURL(endpoint *sdk.GitEndpoint) (string, error) {
 	if endpoint.HostIP != loopbackHost || net.ParseIP(endpoint.HostIP) == nil || endpoint.Port == 0 || endpoint.Port > 65535 || !cloneRepositorySlugPattern.MatchString(endpoint.Repository) || endpoint.Repository == "." || endpoint.Repository == ".." {
 		return "", errors.New("daemon returned an unsafe clone Git endpoint")
 	}
-	url := "git://" + net.JoinHostPort(endpoint.HostIP, strconv.FormatUint(uint64(endpoint.Port), 10)) + "/" + endpoint.Repository
+	// The managed forward serves the clone's Git directory, so the repository
+	// name is the clone and its exported path is <repository>/.git.
+	url := "git://" + net.JoinHostPort(endpoint.HostIP, strconv.FormatUint(uint64(endpoint.Port), 10)) + "/" + endpoint.Repository + "/.git"
 	return url, nil
 }
 
